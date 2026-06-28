@@ -23,6 +23,7 @@ change. (Do NOT store 0.5: that would paint them 'Even' purple and misrepresent 
 
 Usage: python add_lean_regions.py [path-to.sqlite]   (default: the app bundle DB)
 """
+import os
 import sqlite3
 import sys
 from collections import defaultdict
@@ -32,7 +33,7 @@ from shapely.ops import unary_union
 from shapely.geometry import Polygon, MultiPolygon
 
 DB = sys.argv[1] if len(sys.argv) > 1 else \
-    "/Users/gaoe/dev/josh/PrecinctWeather/PrecinctKit/Resources/nyc_precincts.sqlite"
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "PrecinctWeather/PrecinctKit/Resources/nyc_precincts.sqlite")
 
 GRID = 1e-6              # snap shared edges to this grid (deg) so adjacent precincts weld exactly
 MIN_HOLE_AREA = 1e-7    # drop interior rings smaller than ~976 m^2 (snap slivers), keep real holes

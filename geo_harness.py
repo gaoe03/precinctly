@@ -11,6 +11,7 @@ Replicates the iOS lookup EXACTLY:
 
 This mirrors PrecinctDB.lookup + candidateIDs + WKBGeometry.contains.
 """
+import os
 import sqlite3
 import random
 import sys
@@ -18,7 +19,7 @@ from shapely import wkb as shp_wkb
 from shapely.geometry import Point
 
 # The app ships the bundled copy; it is byte-identical to the source output.
-DB = "/Users/gaoe/dev/josh/PrecinctWeather/PrecinctKit/Resources/nyc_precincts.sqlite"
+DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "PrecinctWeather/PrecinctKit/Resources/nyc_precincts.sqlite")
 
 conn = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
 conn.row_factory = sqlite3.Row

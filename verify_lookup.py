@@ -8,13 +8,14 @@ exact two-step lookup the iOS app will use:
 then prints the resolved precinct's profile. This mirrors the Swift R-tree query
 + ray-casting PIP path.
 """
+import os
 import sqlite3
 import sys
 
 from shapely import wkb
 from shapely.geometry import Point
 
-OUT = "/Users/gaoe/dev/josh/nyc_precincts.sqlite"
+OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nyc_precincts.sqlite")
 
 # (label, lat, lon) -- well-known spots, several are classic ethnic enclaves.
 TESTS = [

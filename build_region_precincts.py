@@ -30,8 +30,9 @@ from shapely.ops import transform as shp_transform
 from shapely.validation import make_valid
 from pyproj import Transformer
 
-SRC = "/Users/gaoe/dev/josh/precincts_2026_primary.db"
-DATA_DIR = "/Users/gaoe/dev/josh/public_data"
+ROOT = os.path.dirname(os.path.abspath(__file__))
+SRC = os.path.join(ROOT, "precincts_2026_primary.db")
+DATA_DIR = os.path.join(ROOT, "public_data")
 
 # Which adapter sources each state by default. CA has no public Census 2020 VTDs, so it
 # stays on Josh's private DB. NY/MA/TX are migrated to public Census VTDs.
@@ -523,7 +524,7 @@ def main():
     ap.add_argument("--mode", default="vtd", choices=["vtd", "p2024"],
                     help="vtd = current 2020-VTD sourcing; p2024 = fully-public 2024 precincts")
     ap.add_argument("--data-dir", default=DATA_DIR)
-    ap.add_argument("--out", default="/Users/gaoe/dev/josh/nyc_precincts.sqlite")
+    ap.add_argument("--out", default=os.path.join(ROOT, "nyc_precincts.sqlite"))
     args = ap.parse_args()
 
     states = [s.strip().upper() for s in args.states.split(",") if s.strip()]
