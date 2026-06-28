@@ -1,0 +1,22 @@
+# big / regenerable data - kept on disk, never in git
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+public_data/
+node_modules/
+backups/
+shots/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# xcode generated (xcodegen rebuilds from project.yml)
+*.xcodeproj/
+DerivedData/
+build/
+
+.DS_Store

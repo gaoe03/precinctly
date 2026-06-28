@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  html,body{margin:0;padding:0}
+  #icon{width:1024px;height:1024px}
+</style></head>
+<body>
+<svg id="icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="rough" x="-15%" y="-15%" width="130%" height="130%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.006" numOctaves="2" seed="5" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="11" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <filter id="soft" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="14"/>
+    </filter>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f6f0e3"/>
+      <stop offset="1" stop-color="#ece3cf"/>
+    </linearGradient>
+  </defs>
+
+  <!-- background -->
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+
+  <!-- faint map grid + a couple of "roads" -->
+  <g stroke="#e0d6bf" stroke-width="6" fill="none" opacity="0.9">
+    <path d="M0 220 H1024 M0 470 H1024 M0 720 H1024 M0 900 H1024"/>
+    <path d="M180 0 V1024 M430 0 V1024 M650 0 V1024 M860 0 V1024"/>
+  </g>
+  <g stroke="#d8cca8" stroke-width="16" fill="none" stroke-linecap="round" opacity="0.8">
+    <path d="M-20 600 C 300 560, 520 720, 1044 560"/>
+    <path d="M560 -20 C 520 320, 700 460, 600 1044"/>
+  </g>
+  <!-- a few soft map "blocks" -->
+  <g fill="#e7ddc4" opacity="0.7">
+    <rect x="220" y="260" width="150" height="150" rx="10"/>
+    <rect x="690" y="280" width="120" height="160" rx="10"/>
+    <rect x="250" y="760" width="160" height="110" rx="10"/>
+  </g>
+
+  <!-- ground shadow under the pin tip -->
+  <ellipse cx="512" cy="800" rx="120" ry="30" fill="#3a2f1f" opacity="0.18" filter="url(#soft)"/>
+
+  <!-- hand-drawn map pin (scaled from the icon set's pin) -->
+  <g filter="url(#rough)" stroke="#33291f" stroke-width="3.3" stroke-linecap="round" stroke-linejoin="round" transform="translate(80,86) scale(9)">
+    <path d="M48 24 c-12 0 -20 9 -20 21 c0 14 20 31 20 31 c0 0 20 -17 20 -31 c0 -12 -8 -21 -20 -21 Z" fill="#d44a40"/>
+    <circle cx="48" cy="45" r="8" fill="#f7f4ee"/>
+  </g>
+</svg>
+</body></html>
