@@ -192,33 +192,33 @@ public final class PrecinctDB {
     /// Scope-level aggregates (counts, totals, true median income, lean distribution)
     /// shown at the top of the "By the Numbers" page.
     public func scopeOverview(state: String, county: String? = nil) -> ScopeOverview {
-        let scope = county.map {
-            "state = '\(state)' AND borough = '\($0.replacingOccurrences(of: "'", with: "''"))'"
-        } ?? "state = '\(state)'"
+        let scope = county == nil ? "state = ?" : "state = ? AND borough = ?"
+        let scopeBinds = county.map { [state, $0] } ?? [state]
 
         // One-shot scalar query helper.
-        func scalar(_ sql: String) -> Double? {
+        func scalar(_ sql: String, _ binds: [String] = []) -> Double? {
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
             defer { sqlite3_finalize(stmt) }
+            bindTexts(stmt, binds)
             guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
             return dbl(stmt, 0)
         }
 
-        let precinctCount = Int(scalar("SELECT COUNT(*) FROM precincts WHERE \(scope)") ?? 0)
+        let precinctCount = Int(scalar("SELECT COUNT(*) FROM precincts WHERE \(scope)", scopeBinds) ?? 0)
 
-        let popSum = scalar("SELECT SUM(pop_total) FROM precincts WHERE \(scope) AND pop_total IS NOT NULL")
+        let popSum = scalar("SELECT SUM(pop_total) FROM precincts WHERE \(scope) AND pop_total IS NOT NULL", scopeBinds)
         let totalPopulation = (popSum ?? 0) > 0 ? Int(popSum!) : nil
 
-        let avgDemShare = scalar("SELECT AVG(lean_dem_share) FROM precincts WHERE \(scope) AND lean_votes >= 100")
+        let avgDemShare = scalar("SELECT AVG(lean_dem_share) FROM precincts WHERE \(scope) AND lean_votes >= 100", scopeBinds)
 
         // True median income: count non-null rows, then take the middle one.
-        let n = Int(scalar("SELECT COUNT(*) FROM precincts WHERE \(scope) AND income_median IS NOT NULL") ?? 0)
+        let n = Int(scalar("SELECT COUNT(*) FROM precincts WHERE \(scope) AND income_median IS NOT NULL", scopeBinds) ?? 0)
         let medianIncome: Int? = n == 0 ? nil : scalar("""
             SELECT income_median FROM precincts
             WHERE \(scope) AND income_median IS NOT NULL
             ORDER BY income_median LIMIT 1 OFFSET \(n / 2)
-            """).map { Int($0) }
+            """, scopeBinds).map { Int($0) }
 
         // Lean distribution counts, emitted in a fixed left→right order.
         var counts: [String: Int] = [:]
@@ -228,6 +228,7 @@ public final class PrecinctDB {
             """
         var bstmt: OpaquePointer?
         if sqlite3_prepare_v2(db, bucketSQL, -1, &bstmt, nil) == SQLITE_OK {
+            bindTexts(bstmt, scopeBinds)
             while sqlite3_step(bstmt) == SQLITE_ROW {
                 if let label = text(bstmt, 0) { counts[label] = Int(sqlite3_column_int(bstmt, 1)) }
             }
@@ -246,9 +247,8 @@ public final class PrecinctDB {
 
     public func funFacts(state: String, county: String? = nil) -> [FunFact] {
         var facts: [FunFact] = []
-        let scope = county.map {
-            "state = '\(state)' AND borough = '\($0.replacingOccurrences(of: "'", with: "''"))'"
-        } ?? "state = '\(state)'"
+        let scope = county == nil ? "state = ?" : "state = ? AND borough = ?"
+        let scopeBinds = county.map { [state, $0] } ?? [state]
 
         // With a county filter the county is already in the header, so showing "County, ST" on
         // every card is redundant — show the precinct id instead. Statewide, the county is the
@@ -272,6 +272,7 @@ public final class PrecinctDB {
             var s: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &s, nil) == SQLITE_OK else { return nil }
             defer { sqlite3_finalize(s) }
+            bindTexts(s, scopeBinds)
             guard sqlite3_step(s) == SQLITE_ROW else { return nil }
             let c = Int(sqlite3_column_int(s, 0))
             return c >= 3 ? c : nil
@@ -294,6 +295,7 @@ public final class PrecinctDB {
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
             defer { sqlite3_finalize(stmt) }
+            bindTexts(stmt, scopeBinds)
             guard sqlite3_step(stmt) == SQLITE_ROW else { return }
             let place = placeStr(text(stmt, 0) ?? "", text(stmt, 1) ?? "", text(stmt, 2) ?? "")
             let lb = LeaderboardSpec(factID: id, title: title,
@@ -325,6 +327,7 @@ public final class PrecinctDB {
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
             defer { sqlite3_finalize(stmt) }
+            bindTexts(stmt, scopeBinds)
             guard sqlite3_step(stmt) == SQLITE_ROW else { return }
             let place = placeStr(text(stmt, 0) ?? "", text(stmt, 1) ?? "", text(stmt, 2) ?? "")
             let lb = LeaderboardSpec(factID: id, title: title,
@@ -341,10 +344,8 @@ public final class PrecinctDB {
 
         // Senate-vs-President crossover (NY/MA only; CA has no senate data).
         func topCrossover() {
-            // Same scope, but referencing the `p` (precincts) alias used in the joins.
-            let pScope = county.map {
-                "p.state = '\(state)' AND p.borough = '\($0.replacingOccurrences(of: "'", with: "''"))'"
-            } ?? "p.state = '\(state)'"
+            // Same scope binds, but referencing the `p` (precincts) alias used in the joins.
+            let pScope = county == nil ? "p.state = ?" : "p.state = ? AND p.borough = ?"
 
             // Latest year where senate data exists for this scope.
             let yearSQL = """
@@ -354,6 +355,7 @@ public final class PrecinctDB {
                 """
             var ystmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, yearSQL, -1, &ystmt, nil) == SQLITE_OK else { return }
+            bindTexts(ystmt, scopeBinds)
             let haveYear = sqlite3_step(ystmt) == SQLITE_ROW
             let year = haveYear ? int(ystmt, 0) : nil
             sqlite3_finalize(ystmt)
@@ -372,6 +374,7 @@ public final class PrecinctDB {
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
             defer { sqlite3_finalize(stmt) }
+            bindTexts(stmt, scopeBinds)
             guard sqlite3_step(stmt) == SQLITE_ROW else { return }
             let v = sqlite3_column_double(stmt, 3)
             // Short value so it fits the trailing column; the subtitle carries the Senate-vs-President
@@ -514,9 +517,8 @@ public final class PrecinctDB {
     /// SAME scope + size/sanity filter as the card, so the surfaced winner is row 1. Lazy — only
     /// called when the user taps "see all". Population breaks ties so the order is deterministic.
     public func topPrecincts(_ spec: LeaderboardSpec, limit: Int = 25) -> [LeaderRow] {
-        let scope = spec.county.map {
-            "state = '\(spec.state)' AND borough = '\($0.replacingOccurrences(of: "'", with: "''"))'"
-        } ?? "state = '\(spec.state)'"
+        let scope = spec.county == nil ? "state = ?" : "state = ? AND borough = ?"
+        let scopeBinds = spec.county.map { [spec.state, $0] } ?? [spec.state]
         let sql = """
             SELECT unit_id, borough, state, precinct_name, \(spec.valueColumn),
                    (min_lon + max_lon) / 2.0, (min_lat + max_lat) / 2.0
@@ -528,7 +530,8 @@ public final class PrecinctDB {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
         defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_int(stmt, 1, Int32(limit))
+        bindTexts(stmt, scopeBinds)
+        sqlite3_bind_int(stmt, Int32(scopeBinds.count + 1), Int32(limit))   // LIMIT ? follows the scope binds
         var out: [LeaderRow] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             guard let uid = text(stmt, 0) else { continue }
@@ -596,5 +599,13 @@ public final class PrecinctDB {
         guard sqlite3_column_type(s, i) != SQLITE_NULL, let b = sqlite3_column_blob(s, i)
         else { return nil }
         return Data(bytes: b, count: Int(sqlite3_column_bytes(s, i)))
+    }
+    /// Bind runtime scope values (state, optional county) as text parameters 1...n. Scope
+    /// placeholders must be the FIRST `?`s in the statement; column/order expressions stay
+    /// interpolated because they are compile-time constants (identifiers can't be bound).
+    private func bindTexts(_ stmt: OpaquePointer?, _ values: [String]) {
+        for (i, v) in values.enumerated() {
+            sqlite3_bind_text(stmt, Int32(i + 1), v, -1, SQLITE_TRANSIENT)
+        }
     }
 }
