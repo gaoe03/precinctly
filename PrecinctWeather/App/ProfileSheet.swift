@@ -176,48 +176,48 @@ private struct TrajectoryBox: View {
     let trend: [ElectionResult]   // president, sorted by year, demShare non-nil
 
     var body: some View {
-        Card(title: "Presidential trajectory", systemImage: "chart.line.uptrend.xyaxis") {
+        Card(title: "Presidential trajectory", systemImage: "chart.bar.xaxis") {
             VStack(spacing: 4) {
                 GeometryReader { geo in
                     let w = geo.size.width, h = geo.size.height
                     let top: CGFloat = 16, bottom = h - 18
                     let n = max(1, trend.count)
-                    let px: (Int) -> CGFloat = { i in n == 1 ? w / 2 : 12 + (w - 24) * CGFloat(i) / CGFloat(n - 1) }
-                    // Zoom the vertical axis to the data (symmetric around even) so real swings read
-                    // clearly instead of nearly flat on a full 0...1 scale. The floor keeps tiny changes
-                    // from looking dramatic; the 1.2x padding keeps points off the top and bottom edges.
-                    let dev = trend.compactMap { $0.demShare }.map { abs($0 - 0.5) }.max() ?? 0.1
-                    let span = max(0.07, dev * 1.2)
-                    let py: (Double) -> CGFloat = { s in (top + bottom) / 2 - CGFloat((s - 0.5) / span) * (bottom - top) / 2 }
+                    // Column layout: even slots, bars centered with side padding so they fill the width.
+                    let inset: CGFloat = 6
+                    let slot = (w - inset * 2) / CGFloat(n)
+                    let px: (Int) -> CGFloat = { i in inset + slot * (CGFloat(i) + 0.5) }
+                    let barW = min(40, slot * 0.55)
+                    // Scale to the actual data range so real swings fill the height, while keeping the
+                    // "even" (50/50) baseline on-screen as a reference — clamped to an edge for precincts
+                    // that never cross it, so the bars grow tall instead of clustering at mid-height.
+                    let shares = trend.compactMap { $0.demShare }
+                    let lo0 = shares.min() ?? 0.4, hi0 = shares.max() ?? 0.6
+                    let pad = max(0.02, (hi0 - lo0) * 0.12)
+                    let lo = min(0.5, lo0 - pad), hi = max(0.5, hi0 + pad)
+                    let py: (Double) -> CGFloat = { s in bottom - CGFloat((s - lo) / (hi - lo)) * (bottom - top) }
                     ZStack {
                         Path { p in
                             p.move(to: CGPoint(x: 0, y: py(0.5)))
                             p.addLine(to: CGPoint(x: w, y: py(0.5)))
                         }
                         .stroke(.secondary.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                        Path { p in
-                            for (i, e) in trend.enumerated() {
-                                let pt = CGPoint(x: px(i), y: py(e.demShare ?? 0.5))
-                                if i == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
-                            }
-                        }
-                        .stroke(.primary.opacity(0.45), lineWidth: 2)
                         ForEach(Array(trend.enumerated()), id: \.offset) { i, e in
                             let s = e.demShare ?? 0.5
-                            Circle().fill(Palette.lean(s)).frame(width: 11, height: 11)
-                                .position(x: px(i), y: py(s))
+                            let yEven = py(0.5), yVal = py(s), up = s >= 0.5
+                            UnevenRoundedRectangle(topLeadingRadius: up ? 4 : 0, bottomLeadingRadius: up ? 0 : 4, bottomTrailingRadius: up ? 0 : 4, topTrailingRadius: up ? 4 : 0)
+                                .fill(Palette.lean(s))
+                                .frame(width: barW, height: max(2, abs(yVal - yEven)))
+                                .position(x: px(i), y: (yEven + yVal) / 2)
                             Text(margin(s)).font(.caption2.weight(.bold)).foregroundStyle(Palette.lean(s))
-                                .position(x: px(i), y: max(8, py(s) - 14))
+                                .position(x: px(i), y: s >= 0.5 ? max(8, yVal - 10) : min(yVal + 10, bottom))
                             Text(String(e.year)).font(.caption2).foregroundStyle(.secondary)
                                 .position(x: px(i), y: h - 6)
                         }
                     }
                 }
-                .frame(height: 54)
+                .frame(height: 88)
                 .accessibilityElement()
                 .accessibilityLabel("Presidential margin over time: " + trend.map { "\($0.year) \(margin($0.demShare ?? 0.5))" }.joined(separator: ", "))
-                Text("Two-party presidential margin. Dashed line is even.")
-                    .font(.caption2).foregroundStyle(.tertiary)
             }
         }
     }

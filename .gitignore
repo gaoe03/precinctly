@@ -20,3 +20,5 @@ DerivedData/
 build/
 
 .DS_Store
+PrecinctWeather/build-device/
+site/assets/_backup_*/
