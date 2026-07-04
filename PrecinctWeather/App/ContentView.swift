@@ -42,6 +42,36 @@ struct ContentView: View {
         }
         .task {
             #if DEBUG   // export the full By-the-Numbers page to a tall PNG for the website asset
+            if ProcessInfo.processInfo.arguments.contains("-dbSelfTest") {   // exercise every By-the-Numbers query path and print PASS/FAIL (run after DB or query changes)
+                let db = PrecinctDB.shared
+                var fails = 0
+                func check(_ name: String, _ ok: Bool) { print("SELFTEST \(ok ? "PASS" : "FAIL"): \(name)"); if !ok { fails += 1 } }
+                let ny = db.scopeOverview(state: "NY")
+                check("NY precinct count 14011 (got \(ny.precinctCount))", ny.precinctCount == 14011)
+                check("NY median income non-nil", ny.medianIncome != nil)
+                check("NY lean buckets non-empty", !ny.leanBuckets.isEmpty)
+                let bk = db.scopeOverview(state: "NY", county: "Brooklyn")
+                check("Brooklyn precinct count 1731 (got \(bk.precinctCount))", bk.precinctCount == 1731)
+                let nyFacts = db.funFacts(state: "NY")
+                check("NY facts (got \(nyFacts.count))", nyFacts.count > 10)
+                check("NY crossover present", nyFacts.contains { $0.id == "crossover" })
+                for f in nyFacts.prefix(6) { print("SELFTEST info NY: \(f.id) = \(f.value) at \(f.place)") }
+                if let spec = nyFacts.first(where: { $0.leaderboard != nil })?.leaderboard {
+                    let rows = db.topPrecincts(spec)
+                    check("NY '\(spec.title)' leaderboard 25 rows (got \(rows.count))", rows.count == 25)
+                }
+                let bkFacts = db.funFacts(state: "NY", county: "Brooklyn")
+                check("Brooklyn facts (got \(bkFacts.count))", bkFacts.count > 5)
+                if let spec = bkFacts.first(where: { $0.leaderboard != nil })?.leaderboard {
+                    let rows = db.topPrecincts(spec)
+                    check("Brooklyn '\(spec.title)' leaderboard non-empty (got \(rows.count))", !rows.isEmpty)
+                }
+                let caFacts = db.funFacts(state: "CA")
+                check("CA facts (got \(caFacts.count))", caFacts.count > 10)
+                check("CA crossover absent", !caFacts.contains { $0.id == "crossover" })
+                print(fails == 0 ? "SELFTEST ALL PASS" : "SELFTEST \(fails) FAILURES")
+                return
+            }
             if ProcessInfo.processInfo.arguments.contains("-liveByNumbers") {   // present the live page so its REAL status bar can be composited onto the export
                 try? await Task.sleep(nanoseconds: 3_000_000_000)   // wait out the launch-time selection flow, which would otherwise dismiss the cover
                 model.showFunFacts = true
