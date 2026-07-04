@@ -58,7 +58,7 @@ section{padding:94px 0;position:relative}
 .hero .dek{font-family:var(--sans);font-size:clamp(17px,2vw,20px);color:var(--muted);max-width:33em;margin-top:22px;line-height:1.5}
 .hero .meta{margin-top:26px;font-family:var(--sans);font-size:14px;color:var(--muted)}
 .stage{display:flex;flex-direction:column;align-items:center;gap:16px}
-.phone{position:relative;width:300px;max-width:80vw;border-radius:46px;background:linear-gradient(150deg,#23262d,#121419);padding:9px;box-shadow:0 2px 2px rgba(255,255,255,.12) inset, 0 44px 70px -36px rgba(20,24,32,.6)}
+.phone{position:relative;width:300px;max-width:76vw;border-radius:46px;background:linear-gradient(150deg,#23262d,#121419);padding:9px;box-shadow:0 2px 2px rgba(255,255,255,.12) inset, 0 44px 70px -36px rgba(20,24,32,.6)}
 .phone .scr{position:relative;width:100%;aspect-ratio:1206/2622;border-radius:38px;overflow:hidden;background:var(--bg-2)}
 .phone .scr img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .5s var(--ease)}
 .phone .scr img.on{opacity:1}
@@ -205,14 +205,14 @@ footer{padding:50px 0 44px;border-top:1px solid var(--hair)}
 .num-grid .eyebrow{display:block;margin-bottom:8px}
 .num-grid h2{font-size:clamp(28px,4vw,42px);font-weight:600;letter-spacing:-.025em}
 .num-dek{font-family:var(--sans);font-size:17px;color:var(--muted);margin-top:16px;max-width:42ch;line-height:1.55}
-.num-grid .phone{width:300px;max-width:80vw}
+.num-grid .phone{width:300px;max-width:76vw}
 /* By-the-Numbers: the whole page pans inside a pinned phone, scroll-driven like the card.
    No native scroll, so nothing can overscroll past the bezel. */
 .numtrack{position:relative;height:2640px}
 .numsticky{position:sticky;top:0;min-height:100vh;display:flex;align-items:center}
 .scr.bnscroll{overflow:hidden}
 .scr.bnscroll img{position:absolute;top:0;left:0;width:100%;height:auto;object-fit:fill;opacity:1;will-change:transform;transform:translateY(0)}
-@media(max-width:900px){.num-grid{grid-template-columns:1fr;gap:12px}.num-grid .phone{margin:0 auto;width:68vw;max-width:290px}
+@media(max-width:900px){.num-grid{grid-template-columns:1fr;gap:12px}.num-grid .phone{margin:0 auto;width:300px;max-width:76vw}
   /* keep the pinned pan on touch (not a scary tall page); phone matches the demo's size */
   .numsticky{flex-direction:column;justify-content:center}.numsticky>.wrap{width:100%}
   .num-grid h2{font-size:22px}.num-dek{font-size:13.5px;margin-top:6px}.dek-more{display:none}
@@ -227,7 +227,7 @@ footer{padding:50px 0 44px;border-top:1px solid var(--hair)}
   .combo{height:auto;display:block;max-width:none;margin:0}
   .cardphase{height:130vh}
   .combo-sticky{position:sticky;top:76px;min-height:0;display:block;padding-top:0}
-  .combo .demo-phone{width:76vw;max-width:320px;margin:0 auto}
+  .combo .demo-phone{width:300px;max-width:76vw;margin:0 auto}
   .combo-notes{position:static;max-width:520px;margin:0 auto;padding-top:30px;display:block;min-height:0}
   .cnote{position:static;display:flex;opacity:0;transform:translateY(18px);transition:opacity .55s var(--ease),transform .55s var(--ease);margin-bottom:34px}
   .cnote.shown{opacity:1;transform:none}
@@ -245,6 +245,11 @@ footer{padding:50px 0 44px;border-top:1px solid var(--hair)}
   #leanWrap .ticks{font-size:10.5px;margin-top:16px}
   #leanWrap .bigread-gloss{font-size:12.5px;min-height:3em;margin-top:10px}
   .wgrid2{grid-template-columns:1fr;gap:30px}
+}
+/* short screens: the pinned sections must fit the viewport, so their phones give up the
+   uniform size and shrink just enough (headers stay visible; hero is unpinned and unaffected) */
+@media(max-width:900px) and (max-height:700px){
+  .num-grid .phone,.combo .demo-phone{max-width:38vh}
 }
 </style>
 </head>
