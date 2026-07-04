@@ -195,7 +195,7 @@ func funFactRowItems(_ facts: [FunFact]) -> [RowItem] {
     return items
 }
 
-private func shortPlace(_ p: String) -> String { p.components(separatedBy: " · ").first ?? p }
+private func shortPlace(_ p: String) -> String { p.components(separatedBy: " (").first ?? p }
 
 // MARK: - Components
 
@@ -520,7 +520,7 @@ private struct PrecinctLeaderboard: View {
 
     private func place(_ r: LeaderRow) -> String {
         let c = countyDisplay(r.borough)
-        return r.precinctName.isEmpty ? "\(c), \(r.state)" : "\(c), \(r.state) · \(r.precinctName)"
+        return r.precinctName.isEmpty ? "\(c), \(r.state)" : "\(c), \(r.state) (\(r.precinctName))"
     }
 
     private func row(_ rank: Int, _ r: LeaderRow) -> some View {

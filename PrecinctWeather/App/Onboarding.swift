@@ -15,7 +15,7 @@ struct OnboardingCard: View {
                     .padding(.bottom, 2)
                 Text("Read any precinct")
                     .font(.system(.title2, design: .serif).weight(.bold))
-                Text("Tap anywhere on the map to see its politics, who lives there, and the money. Pull the card up for the full story — or open **By the Numbers** for a state's extremes.")
+                Text("Tap anywhere on the map to see its politics, who lives there, and the money. Pull the card up for the full story, or open **By the Numbers** for a state's extremes.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

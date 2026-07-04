@@ -31,7 +31,7 @@ public struct FunFact: Identifiable, Sendable {
     public let icon: String          // SF Symbol
     public let title: String
     public let value: String
-    public let place: String         // "borough, state · precinct"
+    public let place: String         // "borough, state (precinct)"
     public let lat: Double?
     public let lon: Double?
     public let category: FactCategory

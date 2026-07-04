@@ -113,13 +113,13 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
         let coord = CLLocationCoordinate2D(latitude: lat, longitude: lon)
         guard let hit = PrecinctDB.shared.lookup(lon: lon, lat: lat) else {
             tap(0.4)   // soft "nothing here" cue
-            toast = "No precinct here — tap on land"
+            toast = "No precinct here. Tap on land."
             return
         }
         let p = hit.profile
         if p.state != selectedState {
             tap(0.4)
-            toast = "Outside \(stateName(selectedState)) — that's in \(stateName(p.state)). Switch states from the menu."
+            toast = "Outside \(stateName(selectedState)). That's in \(stateName(p.state)). Switch states from the menu."
             return
         }
         selectionSource = .tap

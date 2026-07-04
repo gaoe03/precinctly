@@ -139,7 +139,7 @@ private struct LeanHero: View {
     }
     var body: some View {
         VStack(spacing: 5) {
-            Text("\(countyDisplay(profile.borough)), \(profile.state)" + (profile.precinctName.map { " · \($0)" } ?? ""))
+            Text("\(countyDisplay(profile.borough)), \(profile.state)" + (profile.precinctName.map { " (\($0))" } ?? ""))
                 .font(.subheadline).foregroundStyle(.secondary)
                 .lineLimit(1).minimumScaleFactor(0.8)
             Text(profile.leanShort)
@@ -274,7 +274,7 @@ private struct WhoLivesHere: View {
                 Button { showInfo = true } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "info.circle")
-                        Text("Shares can total over 100% — why?")
+                        Text("Why can shares total over 100%?")
                     }
                     .font(.caption2).foregroundStyle(.secondary)
                 }
@@ -282,7 +282,7 @@ private struct WhoLivesHere: View {
                 .alert("Race & ethnicity", isPresented: $showInfo) {
                     Button("Got it", role: .cancel) {}
                 } message: {
-                    Text("The U.S. Census asks about race and Hispanic/Latino ethnicity as two separate questions, so a person is often counted in both — shares overlap and can exceed 100%. \"Other race\" is the Census \"Some Other Race\" category, which many Hispanic residents select.")
+                    Text("The U.S. Census asks about race and Hispanic/Latino ethnicity as two separate questions, so a person is often counted in both. Shares overlap and can exceed 100%. \"Other race\" is the Census \"Some Other Race\" category, which many Hispanic residents select.")
                 }
                 }
             }

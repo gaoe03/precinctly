@@ -255,7 +255,7 @@ public final class PrecinctDB {
         // useful locator. (Precinct names are SOS ids: "AD 65 ED 21" in NY, a number in CA.)
         func placeStr(_ boro: String, _ st: String, _ pname: String) -> String {
             if county != nil { return pname.isEmpty ? "\(countyDisplay(boro)), \(st)" : "Precinct \(pname)" }
-            return "\(countyDisplay(boro)), \(st) · \(pname)"
+            return pname.isEmpty ? "\(countyDisplay(boro)), \(st)" : "\(countyDisplay(boro)), \(st) (\(pname))"
         }
 
         // A cap/ceiling tie: the column shown per row, the SQL band that defines "shares the

@@ -213,7 +213,7 @@ struct PrecinctHomeView: View {
         var parts: [String] = []
         if let inc = p.incomeMedian { parts.append(moneyShort(inc)) }
         if let t = p.turnoutEst { parts.append("\(pctStr(min(t, 1))) turnout") }
-        return parts.joined(separator: " · ")
+        return parts.joined(separator: ", ")
     }
 
     private var placeholder: some View {
@@ -313,9 +313,9 @@ struct PrecinctLockView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(p?.precinctName ?? p?.borough ?? "Precinct").font(.headline).widgetAccentable().lineLimit(1)
                 Text(p.map { "\(countyDisplay($0.borough)), \($0.state)" } ?? "Open Precinct").font(.caption2).lineLimit(1)
-                Text("\(p?.leanShort ?? "—")" + (shiftLabel(entry.shiftPts, entry.shiftSinceYear).map { " · \($0)" } ?? "")).font(.caption).lineLimit(1)
+                Text("\(p?.leanShort ?? "—")" + (shiftLabel(entry.shiftPts, entry.shiftSinceYear).map { ", \($0)" } ?? "")).font(.caption).lineLimit(1)
                 if let p, let top = p.raceBreakdown.first {
-                    Text("\(pctStr(top.value)) \(top.label)" + (p.incomeMedian.map { " · \(moneyShort($0))" } ?? ""))
+                    Text("\(pctStr(top.value)) \(top.label)" + (p.incomeMedian.map { ", \(moneyShort($0))" } ?? ""))
                         .font(.caption2).lineLimit(1)
                 }
             }
@@ -328,7 +328,7 @@ struct PrecinctLockView: View {
         var parts = [p.leanShort]
         if let top = p.raceBreakdown.first { parts.append("\(pctStr(top.value)) \(top.label)") }
         if let inc = p.incomeMedian { parts.append(moneyShort(inc)) }
-        return parts.joined(separator: " · ")
+        return parts.joined(separator: ", ")
     }
 }
 
