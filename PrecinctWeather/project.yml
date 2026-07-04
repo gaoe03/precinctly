@@ -12,7 +12,7 @@ settings:
     GENERATE_INFOPLIST_FILE: NO
     TARGETED_DEVICE_FAMILY: "1"
     CODE_SIGN_STYLE: Automatic
-    DEVELOPMENT_TEAM: ""
+    DEVELOPMENT_TEAM: "MMB64J942P"   # personal team; update after Developer Program enrollment
 
 targets:
   PrecinctKit:

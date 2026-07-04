@@ -3,7 +3,7 @@ import Foundation
 /// Shared App Group identifier. Must match the App Groups capability on both the
 /// app and the widget extension entitlements.
 public enum AppGroup {
-    public static let id = "group.com.josh.precinctweather"
+    public static let id = "group.com.gaoe.PrecinctWeather"
 }
 
 /// Tiny cache the app writes (latest precinct profile) and the widget reads.
