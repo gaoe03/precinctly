@@ -4,7 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Precinct: how your precinct voted, and who lives there</title>
-<meta property="og:title" content="Precinct. Read the ground you're standing on.">
 <meta name="theme-color" content="#FFFFFF">
 <style>
 :root{
@@ -65,14 +64,8 @@ section{padding:94px 0;position:relative}
 .chips{display:flex;gap:8px}
 .chip{font-family:var(--sans);font-weight:600;font-size:13px;padding:10px 17px;border-radius:999px;min-height:40px;border:1px solid var(--hair);background:var(--card);color:var(--muted);cursor:pointer;transition:all .18s}
 .chip:hover{color:var(--ink)}
+.chip:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
 .chip.on{background:var(--ink);color:#fff;border-color:var(--ink)}
-
-/* the app: four labels */
-.fourgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:22px;margin-top:6px}
-.fourgrid .it{border-top:1px solid var(--hair);padding-top:13px}
-.fourgrid .it h3{font-size:20px;letter-spacing:-.02em}
-.fourgrid .it p{font-family:var(--sans);font-size:14.5px;color:var(--muted);margin-top:7px;line-height:1.45}
-@media(max-width:820px){.fourgrid{grid-template-columns:1fr 1fr;gap:26px}}
 
 /* interactive demo: real app screenshots; the real expanded sheet slides up over the real map on scroll */
 .demo-stage{height:1560px;position:relative}
@@ -205,14 +198,13 @@ footer{padding:50px 0 44px;border-top:1px solid var(--hair)}
 .num-grid .eyebrow{display:block;margin-bottom:8px}
 .num-grid h2{font-size:clamp(28px,4vw,42px);font-weight:600;letter-spacing:-.025em}
 .num-dek{font-family:var(--sans);font-size:17px;color:var(--muted);margin-top:16px;max-width:42ch;line-height:1.55}
-.num-grid .phone{width:300px;max-width:76vw}
 /* By-the-Numbers: the whole page pans inside a pinned phone, scroll-driven like the card.
    No native scroll, so nothing can overscroll past the bezel. */
 .numtrack{position:relative;height:2640px}
 .numsticky{position:sticky;top:0;min-height:100vh;display:flex;align-items:center}
 .scr.bnscroll{overflow:hidden}
 .scr.bnscroll img{position:absolute;top:0;left:0;width:100%;height:auto;object-fit:fill;opacity:1;will-change:transform;transform:translateY(0)}
-@media(max-width:900px){.num-grid{grid-template-columns:1fr;gap:12px}.num-grid .phone{margin:0 auto;width:300px;max-width:76vw}
+@media(max-width:900px){.num-grid{grid-template-columns:1fr;gap:12px}.num-grid .phone{margin:0 auto}
   /* keep the pinned pan on touch (not a scary tall page); phone matches the demo's size */
   .numsticky{flex-direction:column;justify-content:center}.numsticky>.wrap{width:100%}
   .num-grid h2{font-size:22px}.num-dek{font-size:13.5px;margin-top:6px}.dek-more{display:none}
@@ -316,7 +308,7 @@ footer{padding:50px 0 44px;border-top:1px solid var(--hair)}
         <div class="dscr">
           <img class="dbase" src="assets/demo_map_hid.jpg" loading="lazy" decoding="async" alt="Precinct reading a precinct in Corona, Queens, New York at R plus 10">
           <div class="dfill" aria-hidden="true"></div>
-          <div class="dsheet" id="demoSheet"><img src="assets/demo_card_hid.png" loading="lazy" decoding="async" alt="The precinct's full card: R+10 in 2024, down from D+36 in 2020 and D+61 in 2016; largest group Hispanic at 81%; $37,654 median income; 10% with a bachelor's degree or higher."></div>
+          <div class="dsheet" id="demoSheet"><img src="assets/demo_card_hid.png" loading="lazy" decoding="async" alt="The precinct’s full card: a bar for each presidential race, from D+57 in 2008 to R+10 in 2024; largest group Hispanic at 81%; $37,654 median income; 10% with a college degree."></div>
         </div>
       </div>
     </div></div>
@@ -398,7 +390,7 @@ footer{padding:50px 0 44px;border-top:1px solid var(--hair)}
   <div class="foot">
     <div>
       <a class="brand" href="#top" style="margin-bottom:6px;display:inline-flex"><svg class="brandicon" width="27" height="27" aria-hidden="true"><use href="#appicon"/></svg><b>Precinct</b></a>
-      <p class="colophon">Designed and engineered by Ethan Gao, from an original idea by Josh Metcalf. The pipeline reprojects each state's public precinct boundaries and joins them to Census and election records, about 49,000 precincts, all queried on-device in SQLite.</p>
+      <p class="colophon">Designed and engineered by Ethan Gao, from an original idea by Josh Metcalf. The pipeline reprojects each state’s public precinct boundaries and joins them to Census and election records, about 49,000 precincts, all queried on-device in SQLite.</p>
     </div>
     <div><h4>Index</h4><a href="#demo">The card</a><a href="#widgets">Widgets</a><a href="#numbers">By the numbers</a><a href="#coverage">Coverage</a><a href="privacy.html">Privacy</a></div>
   </div>
