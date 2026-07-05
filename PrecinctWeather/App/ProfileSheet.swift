@@ -143,7 +143,7 @@ private struct LeanHero: View {
                 .font(.subheadline).foregroundStyle(.secondary)
                 .lineLimit(1).minimumScaleFactor(0.8)
             Text(profile.leanShort)
-                .font(.system(size: 38, weight: .heavy, design: .serif))
+                .font(.serifDisplay(38, .heavy))
                 .foregroundStyle(color).contentTransition(.numericText())
             if let labelText {
                 Text(labelText + (profile.leanYear.map { " in \($0)" } ?? ""))
@@ -280,7 +280,7 @@ private struct WhoLivesHere: View {
                 }
                 .buttonStyle(.plain)
                 .alert("Race & ethnicity", isPresented: $showInfo) {
-                    Button("Got it", role: .cancel) {}
+                    Button("Got It", role: .cancel) {}
                 } message: {
                     Text("The U.S. Census asks about race and Hispanic/Latino ethnicity as two separate questions, so a person is often counted in both. Shares overlap and can exceed 100%. \"Other race\" is the Census \"Some Other Race\" category, which many Hispanic residents select.")
                 }
@@ -302,7 +302,7 @@ private struct MoneyEducation: View {
                         label: "Median income",
                         delta: Delta.money(profile.incomeMedian, baseline?.incomeMedian, profile.state))
                 BigStat(value: profile.pctBachelorsOrHigher.map { Fmt.pct($0) } ?? "—",
-                        label: "Bachelor's+",
+                        label: "College degree",
                         delta: Delta.points(profile.pctBachelorsOrHigher, baseline?.pctBachelorsOrHigher, profile.state))
             }
         }

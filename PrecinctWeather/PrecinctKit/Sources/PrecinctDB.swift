@@ -254,7 +254,11 @@ public final class PrecinctDB {
         // every card is redundant — show the precinct id instead. Statewide, the county is the
         // useful locator. (Precinct names are SOS ids: "AD 65 ED 21" in NY, a number in CA.)
         func placeStr(_ boro: String, _ st: String, _ pname: String) -> String {
-            if county != nil { return pname.isEmpty ? "\(countyDisplay(boro)), \(st)" : "Precinct \(pname)" }
+            if county != nil {
+                if pname.isEmpty { return "\(countyDisplay(boro)), \(st)" }
+                // MA names already read "Chatham Town Precinct 1"; don't double the word.
+                return pname.localizedCaseInsensitiveContains("precinct") ? pname : "Precinct \(pname)"
+            }
             return pname.isEmpty ? "\(countyDisplay(boro)), \(st)" : "\(countyDisplay(boro)), \(st) (\(pname))"
         }
 

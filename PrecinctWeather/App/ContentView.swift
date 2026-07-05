@@ -110,7 +110,7 @@ struct ContentView: View {
                     UIApplication.shared.open(url)
                 }
             }
-            Button("Not now", role: .cancel) {}
+            Button("Not Now", role: .cancel) {}
         } message: {
             Text("Allow location access in Settings to center the map on where you are. You can still tap anywhere on the map to explore.")
         }

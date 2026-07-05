@@ -440,7 +440,7 @@ private struct AboutDataSheet: View {
                     aboutRow("Small precincts sit out", "Rankings skip very small precincts (under about 500 people or 100 votes), where a single household can swing the number.")
                 }
             }
-            .navigationTitle("About this data")
+            .navigationTitle("About This Data")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
         }
