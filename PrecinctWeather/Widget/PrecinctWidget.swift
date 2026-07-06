@@ -14,26 +14,9 @@ struct PrecinctEntry: TimelineEntry {
     let shiftSinceYear: Int?                 // the earliest year in that span (usually 2016)
 }
 
-/// One-shot location fetch for the widget. `NSWidgetWantsLocation` grants access while the
-/// app is authorized, so the widget can resolve the current precinct straight from the
-/// bundled DB — no App Group required (that needs a paid account). Coordinates stay on device.
-final class WidgetLocator: NSObject, CLLocationManagerDelegate {
-    private let manager = CLLocationManager()
-    private var done: ((CLLocation?) -> Void)?
-    func fetch(_ completion: @escaping (CLLocation?) -> Void) {
-        if let loc = manager.location { completion(loc); return }   // last known fix
-        done = completion
-        manager.delegate = self
-        manager.requestLocation()
-    }
-    func locationManager(_ m: CLLocationManager, didUpdateLocations locs: [CLLocation]) {
-        done?(locs.last); done = nil
-    }
-    func locationManager(_ m: CLLocationManager, didFailWithError error: Error) {
-        done?(nil); done = nil
-    }
-}
-
+/// `NSWidgetWantsLocation` grants location access while the app is authorized, so the widget
+/// resolves the current precinct straight from the bundled DB. No App Group required
+/// (that needs a paid account). Coordinates stay on device.
 struct PrecinctProvider: TimelineProvider {
     func placeholder(in context: Context) -> PrecinctEntry {
         PrecinctEntry(date: Date(), profile: .sample, rings: [], shiftPts: nil, shiftSinceYear: nil)
@@ -51,12 +34,40 @@ struct PrecinctProvider: TimelineProvider {
             completion(Timeline(entries: [e], policy: .after(Date().addingTimeInterval(60 * 60))))
         }
     }
+    /// One-shot location for the widget. Async CLLocationUpdate instead of a delegate:
+    /// WidgetKit calls providers on background threads with no runloop, where delegate
+    /// callbacks may never arrive (widget stuck on the placeholder forever). The timeout
+    /// guarantees the timeline always completes. Coordinates stay on device.
+    private func currentLocation() async -> CLLocation? {
+        let manager = CLLocationManager()
+        // Precise Location off fuzzes fixes by kilometers; precincts are a few blocks wide,
+        // so better the cache/placeholder than confidently rendering a neighboring precinct.
+        guard manager.accuracyAuthorization != .reducedAccuracy else { return nil }
+        if let cached = manager.location { return cached }   // last known fix
+        return await withTaskGroup(of: CLLocation?.self) { group in
+            group.addTask {
+                do {
+                    for try await update in CLLocationUpdate.liveUpdates() {
+                        if let loc = update.location { return loc }
+                    }
+                } catch {}
+                return nil
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(8))
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+    }
+
     /// Resolve the precinct (+ its shape) at the device's location from the bundled DB; fall back
     /// to the app's cached profile (App Group, if provisioned), else the "open app" placeholder.
     private func resolve(_ completion: @escaping (PrecinctEntry) -> Void) {
-        let locator = WidgetLocator()
-        locator.fetch { loc in
-            _ = locator   // retain until the callback fires
+        Task {
+            let loc = await currentLocation()
             let profile: PrecinctProfile?
             let rings: [[CLLocationCoordinate2D]]
             if let loc {
@@ -148,7 +159,7 @@ struct PrecinctHomeView: View {
                 Spacer(minLength: 1)
                 Text(p.leanShort).font(.system(size: 30, weight: .heavy, design: .serif))
                     .foregroundStyle(lean).lineLimit(1).minimumScaleFactor(0.6)
-                if let sh = shiftLabel(e.shiftPts, e.shiftSinceYear) {
+                if let sh = subline(p, e) {
                     Text(sh).font(.caption2).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
                 }
                 if let s = p.leanDemShare { TwoPartyBarW(demShare: s).padding(.vertical, 3) }
@@ -178,7 +189,7 @@ struct PrecinctHomeView: View {
                     Spacer(minLength: 2)
                     Text(p.leanShort).font(.system(.title, design: .serif).weight(.heavy))
                         .foregroundStyle(lean).lineLimit(1).minimumScaleFactor(0.6)
-                    if let sh = shiftLabel(e.shiftPts, e.shiftSinceYear) {
+                    if let sh = subline(p, e) {
                         Text(sh).font(.caption2).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.8)
                     }
                     if let s = p.leanDemShare { TwoPartyBarW(demShare: s).frame(width: 130).padding(.top, 3) }
@@ -209,6 +220,14 @@ struct PrecinctHomeView: View {
         }
     }
 
+    /// The line under the big lean number: a shift like "D+6 since 2016", except in
+    /// tiny-electorate precincts where both the lean and the shift rest on a handful of
+    /// ballots; say that instead. (100 matches By-the-Numbers' vote floor.)
+    private func subline(_ p: PrecinctProfile, _ e: PrecinctEntry) -> String? {
+        if let v = p.leanVotes, v < 100 { return "Only \(v) vote\(v == 1 ? "" : "s") cast" }
+        return shiftLabel(e.shiftPts, e.shiftSinceYear)
+    }
+
     private func statsLineA(_ p: PrecinctProfile) -> String {
         var parts: [String] = []
         if let inc = p.incomeMedian { parts.append(moneyShort(inc)) }
@@ -219,7 +238,7 @@ struct PrecinctHomeView: View {
     private var placeholder: some View {
         VStack(spacing: 4) {
             Image(systemName: "mappin.and.ellipse").font(.title2)
-            Text("Open Precinct once and allow location").font(.caption)
+            Text("Open Precinct and allow precise location").font(.caption)
                 .multilineTextAlignment(.center).foregroundStyle(.secondary)
         }
     }
@@ -313,7 +332,7 @@ struct PrecinctLockView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(p?.precinctName ?? p?.borough ?? "Precinct").font(.headline).widgetAccentable().lineLimit(1)
                 Text(p.map { "\(countyDisplay($0.borough)), \($0.state)" } ?? "Open Precinct").font(.caption2).lineLimit(1)
-                Text("\(p?.leanShort ?? "—")" + (shiftLabel(entry.shiftPts, entry.shiftSinceYear).map { ", \($0)" } ?? "")).font(.caption).lineLimit(1)
+                Text("\(p?.leanShort ?? "—")" + (rectSubline(p).map { ", \($0)" } ?? "")).font(.caption).lineLimit(1)
                 if let p, let top = p.raceBreakdown.first {
                     Text("\(pctStr(top.value)) \(top.label)" + (p.incomeMedian.map { ", \(moneyShort($0))" } ?? ""))
                         .font(.caption2).lineLimit(1)
@@ -321,6 +340,12 @@ struct PrecinctLockView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    /// Same tiny-electorate honesty as the home widget's subline.
+    private func rectSubline(_ p: PrecinctProfile?) -> String? {
+        if let v = p?.leanVotes, v < 100 { return "only \(v) vote\(v == 1 ? "" : "s")" }
+        return shiftLabel(entry.shiftPts, entry.shiftSinceYear)
     }
 
     private func inlineText(_ p: PrecinctProfile?) -> String {

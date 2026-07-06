@@ -25,7 +25,14 @@ public final class PrecinctDB {
             assertionFailure("nyc_precincts.sqlite missing from PrecinctKit bundle")
             return
         }
-        sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READONLY, nil)
+        // FULLMUTEX: the widget process hosts two providers that WidgetKit refreshes on
+        // background threads with no serialization guarantee, so the shared (read-only)
+        // connection needs SQLite's own locking. App code still stays on main by design.
+        if sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil) != SQLITE_OK {
+            sqlite3_close(db)   // a failed open still allocates a handle
+            db = nil
+            assertionFailure("bundled DB failed to open")
+        }
     }
 
     deinit { if let db { sqlite3_close(db) } }

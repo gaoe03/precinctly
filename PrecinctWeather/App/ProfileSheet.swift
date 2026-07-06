@@ -157,6 +157,12 @@ private struct LeanHero: View {
                     Text("\(Fmt.pct(1 - s)) Rep").foregroundStyle(.red)
                 }
                 .font(.caption)
+                // A precinct with a handful of ballots can read R+100; say so instead of
+                // letting the giant number stand alone. (100 matches By-the-Numbers' floor.)
+                if let v = profile.leanVotes, v < 100 {
+                    Text("Based on only \(v) vote\(v == 1 ? "" : "s") cast")
+                        .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                }
                 if let t = profile.turnoutEst, t <= 1.05 {
                     Text("\(Fmt.pct(min(t, 1))) turnout" + (profile.leanYear.map { " in \($0)" } ?? ""))
                         .font(.caption2).foregroundStyle(.secondary)

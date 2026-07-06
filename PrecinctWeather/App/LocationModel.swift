@@ -52,6 +52,11 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
     private var selectionSource: SelectionSource = .initial
     private var loadedCounty: String?   // which county's precincts are currently tinted
 
+    // Once-per-launch toasts; repeated location updates must not re-nag.
+    private var warnedOutOfCoverage = false
+    private var warnedApproximate = false
+    private var requestedFullAccuracy = false
+
     private let manager = CLLocationManager()
     private let haptics = UIImpactFeedbackGenerator(style: .soft)
 
@@ -72,7 +77,7 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
         switch status {
         case .notDetermined: manager.requestWhenInUseAuthorization()
         case .authorizedWhenInUse, .authorizedAlways: locationDenied = false; beginUpdates()
-        case .denied, .restricted: locationDenied = true; myCoord = nil
+        case .denied, .restricted: noteDenied(); myCoord = nil
         @unknown default: break
         }
         if selection == nil {                     // keep the map alive before any fix
@@ -105,6 +110,14 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
     private func beginUpdates() {
         manager.requestLocation()
         manager.startMonitoringSignificantLocationChanges()
+    }
+
+    /// The app is fully usable by tapping, so nag about denied location once per denial,
+    /// not on every cold launch. (The locate-me button still re-triggers it on demand.)
+    private func noteDenied() {
+        guard !UserDefaults.standard.bool(forKey: "warnedLocationDenied") else { return }
+        UserDefaults.standard.set(true, forKey: "warnedLocationDenied")
+        locationDenied = true
     }
 
     /// Map tap / neighborhood picker. Does NOT touch the widget cache, and pins
@@ -140,7 +153,14 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
 
     private func selectByGPS(_ coord: CLLocationCoordinate2D) {
         myCoord = coord                            // the "you" pin always tracks GPS
-        guard let hit = PrecinctDB.shared.lookup(lon: coord.longitude, lat: coord.latitude) else { return }
+        guard let hit = PrecinctDB.shared.lookup(lon: coord.longitude, lat: coord.latitude) else {
+            // Worded so it's also true for covered-state users standing on water.
+            if !warnedOutOfCoverage {
+                warnedOutOfCoverage = true
+                toast = "No precinct at your location. Precinct covers NY, CA, MA, and TX. Tap the map to explore."
+            }
+            return
+        }
         let p = hit.profile
         ProfileStore.save(p)                       // widget always reflects where you ARE
         WidgetCenter.shared.reloadTimelines(ofKind: "PrecinctWidget")
@@ -219,9 +239,10 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
         switch status {
         case .authorizedWhenInUse, .authorizedAlways:
             locationDenied = false
+            UserDefaults.standard.set(false, forKey: "warnedLocationDenied")   // a later revoke warns once again
             beginUpdates()
         case .denied, .restricted:
-            locationDenied = true
+            noteDenied()
             myCoord = nil                    // don't leave a stale "you" pin
         default:
             break
@@ -229,7 +250,31 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
     }
     func locationManager(_ m: CLLocationManager, didUpdateLocations locs: [CLLocation]) {
         guard let loc = locs.last else { return }
+        // Precise Location off fuzzes fixes to 1-5 km; precincts are a few blocks wide, so a
+        // fuzzed fix would confidently select the WRONG precinct. Ask once for temporary full
+        // accuracy; if it stays reduced, keep the "you" pin but don't pretend to know the precinct.
+        if m.accuracyAuthorization == .reducedAccuracy {
+            myCoord = loc.coordinate
+            if !requestedFullAccuracy {
+                requestedFullAccuracy = true
+                m.requestTemporaryFullAccuracyAuthorization(withPurposeKey: "PrecinctLookup") { [weak self] _ in
+                    DispatchQueue.main.async {
+                        if m.accuracyAuthorization == .reducedAccuracy { self?.warnApproximate() }
+                        else { m.requestLocation() }   // precise granted: get a real fix
+                    }
+                }
+            } else {
+                warnApproximate()
+            }
+            return
+        }
         selectByGPS(loc.coordinate)
+    }
+
+    private func warnApproximate() {
+        guard !warnedApproximate else { return }
+        warnedApproximate = true
+        toast = "Precise Location is off, so your exact precinct can't be found. Tap the map instead."
     }
     func locationManager(_ m: CLLocationManager, didFailWithError error: Error) {}
 }

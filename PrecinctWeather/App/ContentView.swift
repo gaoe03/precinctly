@@ -13,7 +13,6 @@ struct ContentView: View {
     @State private var showNeighbors = false
     @AppStorage("hasOnboarded") private var hasOnboarded = false
     @AppStorage("defaultState") private var defaultState = "NY"
-    @State private var showOnboarding = false
 
     var body: some View {
         ZStack {
@@ -27,12 +26,9 @@ struct ContentView: View {
         }
         .onAppear {
             if model.selection == nil { camera = .region(initialRegion(for: defaultState)) }
-            model.start()
-            showOnboarding = !hasOnboarded
-        }
-        .fullScreenCover(isPresented: $showOnboarding) {
-            OnboardingCard { hasOnboarded = true; showOnboarding = false }
-                .presentationBackground(.clear)
+            // First run: onboarding explains the app BEFORE the location permission dialog,
+            // so start() (which triggers the prompt) waits for the card to be dismissed.
+            if hasOnboarded { model.start() }
         }
         .onChange(of: model.selection?.unitID) {
             if let r = model.selectionRegion {
@@ -102,6 +98,16 @@ struct ContentView: View {
         }
         .overlay(alignment: .bottom) {
             BottomPanel(expanded: $expanded).environmentObject(model)
+        }
+        .overlay {
+            // A plain overlay, not a cover: presenting from the first frame raced the
+            // presentation machinery (and the permission dialog) and could never appear.
+            if !hasOnboarded {
+                OnboardingCard {
+                    withAnimation(.easeOut(duration: 0.25)) { hasOnboarded = true }
+                    model.start()
+                }
+            }
         }
         .animation(.default, value: model.toast)
         .alert("Location is off", isPresented: $model.locationDenied) {
@@ -183,7 +189,10 @@ struct ContentView: View {
             .padding(.horizontal, 30)
             .transition(.move(edge: .top).combined(with: .opacity))
             .task(id: text) {
-                try? await Task.sleep(nanoseconds: 2_400_000_000)
+                // Reading time, not a fixed 2.4s: the coverage/accuracy notices are full
+                // sentences and were gone before anyone could read them.
+                let seconds = max(2.4, Double(text.count) * 0.07)
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
                 withAnimation { model.toast = nil }
             }
     }
