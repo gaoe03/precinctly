@@ -2,11 +2,13 @@
 
 A native iOS app and home/lock-screen widget that shows the political lean and demographics of the precinct you're standing in. A weather app, but for local election and census data: open the map and tap any precinct to see how it voted and who lives there, or glance at the widget for your current one.
 
-Covers New York, California, Massachusetts, and Texas. Currently on TestFlight.
+Covers New York, California, Massachusetts, and Texas.
 
-<!-- TODO: paste your TestFlight join link on the line above once you have it -->
-
-![Precinct on California](site/assets/hero_ca.jpg)
+<p align="center">
+  <img src="site/assets/hero_ca.jpg" width="240" alt="Precinct map, San Francisco (D +78)">
+  <img src="site/assets/demo_map_hid.jpg" width="240" alt="Precinct map, Queens NY (R +10)">
+  <img src="site/assets/demo_card_hid.png" width="240" alt="Precinct profile: voting trend, demographics, income">
+</p>
 
 ## What it does
 
