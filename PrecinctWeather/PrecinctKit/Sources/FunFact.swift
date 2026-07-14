@@ -32,6 +32,7 @@ public struct FunFact: Identifiable, Sendable {
     public let title: String
     public let value: String
     public let place: String         // "borough, state (precinct)"
+    public let unitID: String?       // exact winner, so taps select by id instead of bbox center
     public let lat: Double?
     public let lon: Double?
     public let category: FactCategory
@@ -42,12 +43,12 @@ public struct FunFact: Identifiable, Sendable {
     public let leaderboard: LeaderboardSpec?   // present iff there's a crowd to drill into
 
     public init(id: String, icon: String, title: String, value: String,
-                place: String, lat: Double?, lon: Double?,
+                place: String, unitID: String? = nil, lat: Double?, lon: Double?,
                 category: FactCategory, kind: FactKind,
                 pairKey: String? = nil, subtitle: String? = nil,
                 tieCount: Int? = nil, leaderboard: LeaderboardSpec? = nil) {
         self.id = id; self.icon = icon; self.title = title; self.value = value
-        self.place = place; self.lat = lat; self.lon = lon
+        self.place = place; self.unitID = unitID; self.lat = lat; self.lon = lon
         self.category = category; self.kind = kind
         self.pairKey = pairKey; self.subtitle = subtitle
         self.tieCount = tieCount; self.leaderboard = leaderboard

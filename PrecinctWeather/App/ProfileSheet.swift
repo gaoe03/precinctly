@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import PrecinctKit
 
 // MARK: - Bottom panel (custom flush-to-edge card)
@@ -13,24 +14,49 @@ struct BottomPanel: View {
     @Binding var expanded: Bool
 
     static let peekHeight: CGFloat = 190
+    /// Peek grows at accessibility text sizes so the hero (including the low-vote caveat,
+    /// the line the design exists to protect) stays visible instead of clipping at 190pt.
+    static func peekHeight(for dts: DynamicTypeSize) -> CGFloat {
+        dts.isAccessibilitySize ? 276 : peekHeight
+    }
     // Single source of truth for the live drag height; nil at rest (height follows `expanded`).
     // Using @State (not @GestureState) so the release can clear it together with `expanded` in one
     // animated transaction — otherwise @GestureState's auto-reset fires in a separate frame and the
     // card jumps to its old size before springing to the new one.
     @State private var dragHeight: CGFloat? = nil
+    @AppStorage("hapticsEnabled") private var hapticsEnabled = true
+    @Environment(\.dynamicTypeSize) private var dts
     private var spring: Animation { .spring(response: 0.34, dampingFraction: 0.86) }
+    // One prepared generator (matching LocationModel's), not a fresh unprepared one per snap.
+    private static let snapHaptic: UIImpactFeedbackGenerator = {
+        let g = UIImpactFeedbackGenerator(style: .light); g.prepare(); return g
+    }()
+    private func snap() { if hapticsEnabled { Self.snapHaptic.impactOccurred() } }
 
     var body: some View {
         GeometryReader { geo in
-            let fullH = max(Self.peekHeight, geo.size.height)
-            let restH = expanded ? fullH : Self.peekHeight
+            let peekH = Self.peekHeight(for: dts)
+            let fullH = max(peekH, geo.size.height)
+            let restH = expanded ? fullH : peekH
             let height = dragHeight ?? restH
             VStack(spacing: 0) {
-                handle(fullH: fullH)
+                handle(peekH: peekH, fullH: fullH)
                 // Reveal the full profile as soon as the card grows past peek (not only at the end
                 // of the drag), so expanding fills in continuously instead of staying blank then
                 // popping everything in at once.
-                ProfileContent(showContent: height > Self.peekHeight + 2, scrolls: expanded)
+                ProfileContent(showContent: height > peekH + 2, scrolls: expanded)
+                    // At peek the whole card (not just the handle) taps/drags to expand, matching
+                    // how every system sheet behaves. A clear catcher (only present at peek, where
+                    // the content is the non-interactive hero) keeps the ScrollView identity stable.
+                    // At accessibility sizes the catcher steps aside so the hero can scroll at peek
+                    // (the handle still expands); otherwise oversized text would clip with no recourse.
+                    .overlay {
+                        if !expanded && !dts.isAccessibilitySize {
+                            Color.clear.contentShape(Rectangle())
+                                .onTapGesture { snap(); withAnimation(spring) { expanded = true } }
+                                .gesture(resizeDrag(peekH: peekH, fullH: fullH))
+                        }
+                    }
             }
             .frame(maxWidth: .infinity)
             .frame(height: height, alignment: .top)
@@ -38,10 +64,24 @@ struct BottomPanel: View {
                 // Material extended down through the home-indicator strip via negative padding
                 // (NOT ignoresSafeArea, which makes the greedy shape fill the whole screen) so the
                 // card sits flush to the bottom edge — no map showing underneath.
+                // Opaque, not material: the frosted panel live-blurred the map (tint polygons
+                // included) on every frame of a drag, which is what made resizing feel heavy
+                // in polygon-dense counties. A solid card costs nothing to move.
                 UnevenRoundedRectangle(topLeadingRadius: 26, topTrailingRadius: 26)
-                    .fill(.regularMaterial)
+                    .fill(Color(.systemBackground))
                     .shadow(color: .black.opacity(0.12), radius: 10, y: -2)
                     .padding(.bottom, -geo.safeAreaInsets.bottom)
+            }
+            .overlay(alignment: .top) {
+                // Invisible grab strip: the visible handle stays a 5pt capsule, but the top
+                // 64pt of the card behaves like the handle (tap toggles, drag resizes), so
+                // pulling the full view back down doesn't require landing on the thin handle.
+                Color.clear
+                    .frame(height: 64)
+                    .contentShape(Rectangle())
+                    .onTapGesture { snap(); withAnimation(spring) { expanded.toggle() } }
+                    .gesture(resizeDrag(peekH: peekH, fullH: fullH))
+                    .accessibilityHidden(true)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         }
@@ -50,34 +90,38 @@ struct BottomPanel: View {
         .fullScreenCover(isPresented: $model.showFunFacts) { FunFactsView().environmentObject(model) }
     }
 
+    // Global coordinate space: the handle moves as the card resizes, so measuring the drag in its
+    // own (moving) local space feeds back and makes it oscillate. Shared by the handle and the
+    // peek-card catcher so both resize identically.
+    private func resizeDrag(peekH: CGFloat, fullH: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 4, coordinateSpace: .global)
+            .onChanged { value in
+                let base = expanded ? fullH : peekH
+                dragHeight = min(fullH, max(peekH, base - value.translation.height))
+            }
+            .onEnded { value in
+                if abs(value.translation.height) > 40 { snap() }
+                // Decide the target, then clear the drag override and flip `expanded` in one
+                // animated transaction so the height springs straight from where the finger
+                // left it to the target — no intermediate snap.
+                withAnimation(spring) {
+                    if value.translation.height < -40 { expanded = true }
+                    else if value.translation.height > 40 { expanded = false }
+                    dragHeight = nil
+                }
+            }
+    }
+
     // Tap toggles peek ↔ full; a drag on the handle tracks height live and snaps on release.
-    private func handle(fullH: CGFloat) -> some View {
+    private func handle(peekH: CGFloat, fullH: CGFloat) -> some View {
         Capsule()
             .fill(.secondary.opacity(0.5))
             .frame(width: 40, height: 5)
             .frame(maxWidth: .infinity)
             .frame(height: 28)
             .contentShape(Rectangle())
-            .onTapGesture { withAnimation(spring) { expanded.toggle() } }
-            .gesture(
-                // Global coordinate space: the handle moves as the card resizes, so measuring the
-                // drag in its own (moving) local space feeds back and makes it oscillate.
-                DragGesture(minimumDistance: 4, coordinateSpace: .global)
-                    .onChanged { value in
-                        let base = expanded ? fullH : Self.peekHeight
-                        dragHeight = min(fullH, max(Self.peekHeight, base - value.translation.height))
-                    }
-                    .onEnded { value in
-                        // Decide the target, then clear the drag override and flip `expanded` in one
-                        // animated transaction so the height springs straight from where the finger
-                        // left it to the target — no intermediate snap.
-                        withAnimation(spring) {
-                            if value.translation.height < -40 { expanded = true }
-                            else if value.translation.height > 40 { expanded = false }
-                            dragHeight = nil
-                        }
-                    }
-            )
+            .onTapGesture { snap(); withAnimation(spring) { expanded.toggle() } }
+            .gesture(resizeDrag(peekH: peekH, fullH: fullH))
             .accessibilityElement()
             .accessibilityLabel(expanded ? "Collapse panel" : "Expand panel")
             .accessibilityAddTraits(.isButton)
@@ -95,6 +139,17 @@ private struct ProfileContent: View {
 
     var body: some View {
         ScrollView {
+            content
+        }
+        // At accessibility sizes the peek hero may still exceed even the taller peek,
+        // so let it scroll instead of clipping the caveat lines.
+        .scrollDisabled(!scrolls && !dts.isAccessibilitySize)
+    }
+
+    @Environment(\.dynamicTypeSize) private var dts
+
+    @ViewBuilder
+    private var content: some View {
             if let p = model.selection {
                 VStack(spacing: 9) {
                     LeanHero(profile: p)
@@ -124,8 +179,6 @@ private struct ProfileContent: View {
                     description: Text("Tap anywhere in \(stateName(model.selectedState)) to see that precinct's profile."))
                     .padding(.top, 40)
             }
-        }
-        .scrollDisabled(!scrolls)
     }
 }
 
@@ -139,7 +192,7 @@ private struct LeanHero: View {
     }
     var body: some View {
         VStack(spacing: 5) {
-            Text("\(countyDisplay(profile.borough)), \(profile.state)" + (profile.precinctName.map { " (\($0))" } ?? ""))
+            Text("\(countyDisplay(profile.borough)), \(profile.state)" + (profile.precinctName.map { " (\(precinctDisplayName($0)))" } ?? ""))
                 .font(.subheadline).foregroundStyle(.secondary)
                 .lineLimit(1).minimumScaleFactor(0.8)
             Text(profile.leanShort)
@@ -152,9 +205,9 @@ private struct LeanHero: View {
             if let s = profile.leanDemShare {
                 TwoPartyBar(demShare: s).accessibilityHidden(true).padding(.top, 2)
                 HStack {
-                    Text("\(Fmt.pct(s)) Dem").foregroundStyle(.blue)
+                    Text("\(Fmt.pct(s)) Dem").foregroundStyle(Palette.dem)
                     Spacer()
-                    Text("\(Fmt.pct(1 - s)) Rep").foregroundStyle(.red)
+                    Text("\(Fmt.pct(1 - s)) Rep").foregroundStyle(Palette.rep)
                 }
                 .font(.caption)
                 // A precinct with a handful of ballots can read R+100; say so instead of
@@ -172,7 +225,7 @@ private struct LeanHero: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(profile.borough). Political lean \(profile.leanShort), \(profile.leanLabel ?? "no election data")")
+        .accessibilityLabel("\(countyDisplay(profile.borough)). Political lean \(profile.leanShort), \(profile.leanLabel ?? "no election data")")
     }
 }
 
@@ -182,11 +235,14 @@ private struct TrajectoryBox: View {
     let trend: [ElectionResult]   // president, sorted by year, demShare non-nil
 
     var body: some View {
-        Card(title: "Presidential trajectory", systemImage: "chart.bar.xaxis") {
+        Card(title: "Presidential trajectory", systemImage: "chart.bar.fill", solid: true) {
             VStack(spacing: 4) {
                 GeometryReader { geo in
                     let w = geo.size.width, h = geo.size.height
-                    let top: CGFloat = 16, bottom = h - 18
+                    // 30pt reserved under the bars: a deep-R bar bottoms out at `bottom`, its
+                    // margin label sits fully below the bar, and the year row sits below that.
+                    // (18pt used to force R+ labels onto the bar tip, where they vanished.)
+                    let top: CGFloat = 16, bottom = h - 30
                     let n = max(1, trend.count)
                     // Column layout: even slots, bars centered with side padding so they fill the width.
                     let inset: CGFloat = 6
@@ -215,13 +271,13 @@ private struct TrajectoryBox: View {
                                 .frame(width: barW, height: max(2, abs(yVal - yEven)))
                                 .position(x: px(i), y: (yEven + yVal) / 2)
                             Text(margin(s)).font(.caption2.weight(.bold)).foregroundStyle(Palette.lean(s))
-                                .position(x: px(i), y: s >= 0.5 ? max(8, yVal - 10) : min(yVal + 10, bottom))
+                                .position(x: px(i), y: s >= 0.5 ? max(8, yVal - 10) : min(yVal + 10, h - 22))
                             Text(String(e.year)).font(.caption2).foregroundStyle(.secondary)
                                 .position(x: px(i), y: h - 6)
                         }
                     }
                 }
-                .frame(height: 88)
+                .frame(height: 100)
                 .accessibilityElement()
                 .accessibilityLabel("Presidential margin over time: " + trend.map { "\($0.year) \(margin($0.demShare ?? 0.5))" }.joined(separator: ", "))
             }
@@ -244,7 +300,7 @@ private struct WhoLivesHere: View {
         profile.raceBreakdown.filter { $0.value >= 0.02 }
     }
     var body: some View {
-        Card(title: "Who lives here", systemImage: "person.3.fill") {
+        Card(title: "Who lives here", systemImage: "person.3.fill", solid: true) {
             if rows.isEmpty {
                 Text("No demographic data for this precinct.")
                     .font(.subheadline).foregroundStyle(.secondary)
@@ -302,7 +358,7 @@ private struct MoneyEducation: View {
     let profile: PrecinctProfile
     let baseline: Baseline?
     var body: some View {
-        Card(title: "Money & education", systemImage: "dollarsign.circle.fill") {
+        Card(title: "Money & education", systemImage: "dollarsign.circle.fill", solid: true) {
             HStack(alignment: .top, spacing: 12) {
                 BigStat(value: profile.incomeMedian.map { Fmt.money($0) } ?? "—",
                         label: "Median income",
@@ -320,7 +376,7 @@ private struct MoneyEducation: View {
 private struct MoreStats: View {
     let profile: PrecinctProfile
     var body: some View {
-        Card(title: "More", systemImage: "chart.bar.fill") {
+        Card(title: "Everything else", systemImage: "square.grid.2x2.fill", solid: true) {
             let cols = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
             LazyVGrid(columns: cols, spacing: 16) {
                 SmallStat("Median age", profile.avgAge.map { String(Int($0.rounded())) })

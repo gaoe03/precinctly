@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - Helpers
 
@@ -12,9 +13,19 @@ enum Palette {
         let t = max(0, min(1, s))
         return t >= 0.5 ? lerp(purple, blue, (t - 0.5) * 2) : lerp(red, purple, t * 2)
     }
+    /// Canonical party anchors for bars, labels, and legends. Every surface that colors
+    /// "Democrat" or "Republican" as a category (not a data value) uses these, so the app
+    /// has exactly one Democrat blue and one Republican red.
+    static let dem = lean(0.9)
+    static let rep = lean(0.1)
     /// Restrained single-hue (slate/indigo) ramp keyed by rank: largest group darkest.
+    /// Lighter base in dark mode so low-opacity ranks stay visible over dark fills.
     static func rankTint(_ rank: Int) -> Color {
-        let base = Color(red: 0.36, green: 0.40, blue: 0.58)   // muted slate-indigo
+        let base = Color(UIColor { tc in
+            tc.userInterfaceStyle == .dark
+                ? UIColor(red: 0.62, green: 0.66, blue: 0.82, alpha: 1)
+                : UIColor(red: 0.36, green: 0.40, blue: 0.58, alpha: 1)
+        })
         let opacity = max(0.35, 1.0 - Double(rank) * 0.16)
         return base.opacity(opacity)
     }

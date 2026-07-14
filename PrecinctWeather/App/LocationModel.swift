@@ -33,6 +33,9 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
     @Published var selection: PrecinctProfile?
     @Published var selectionCoord: CLLocationCoordinate2D?
     @Published var selectionRegion: MKCoordinateRegion?
+    /// Bumped on every (re)load so the camera flies even when re-selecting the same precinct
+    /// (e.g. "locate me" after panning away). Keyed on this instead of the precinct id.
+    @Published var selectionSerial = 0
     @Published var selectedRings: [[CLLocationCoordinate2D]] = []
     @Published var neighborPins: [PrecinctPin] = []
     @Published var presidentTrend: [ElectionResult] = []   // president Dem two-party share over time
@@ -51,21 +54,43 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
     private enum SelectionSource { case initial, gps, tap }
     private var selectionSource: SelectionSource = .initial
     private var loadedCounty: String?   // which county's precincts are currently tinted
+    /// Set by an explicit locate-me press so the camera reframes even when the precinct
+    /// didn't change. Everything else only flies when the selection actually moves,
+    /// re-tapping your own precinct shouldn't cost an animation.
+    private var forceNextReframe = false
 
     // Once-per-launch toasts; repeated location updates must not re-nag.
     private var warnedOutOfCoverage = false
     private var warnedApproximate = false
     private var requestedFullAccuracy = false
+    /// True while the system permission prompt this session is outstanding. A denial that
+    /// arrives through it gets a quiet toast, not a modal (the user just answered; don't
+    /// ask again in the same breath). The modal stays for launches that start denied and
+    /// for explicit locate-me presses.
+    private var promptedThisSession = false
+    private var sessionTapCount = 0   // successful map taps, for the one-time By-the-Numbers tip
 
     private let manager = CLLocationManager()
     private let haptics = UIImpactFeedbackGenerator(style: .soft)
 
     override init() {
         super.init()
-        // Open to the user's chosen default state (Settings → General); a GPS fix may take over.
-        if let saved = UserDefaults.standard.string(forKey: "defaultState"),
-           appStates.contains(where: { $0.abbr == saved }) {
+        // Open where the last GPS fix landed (so a Houston user reopens on Texas, not Times Square);
+        // fall back to the chosen default state (Settings → General). A fresh GPS fix may take over.
+        if let last = UserDefaults.standard.string(forKey: "lastGeoState"),
+           appStates.contains(where: { $0.abbr == last }) {
+            selectedState = last
+        } else if let saved = UserDefaults.standard.string(forKey: "defaultState"),
+                  appStates.contains(where: { $0.abbr == saved }) {
             selectedState = saved
+        } else {
+            // Very first launch, before any fix or preference: guess from the time zone so a
+            // Texan's or Californian's first frame is at least their own state, not Times Square.
+            switch TimeZone.current.identifier {
+            case "America/Chicago":     selectedState = "TX"
+            case "America/Los_Angeles": selectedState = "CA"
+            default: break   // Eastern (NY/MA) and everywhere else keep the NY default
+            }
         }
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
@@ -75,7 +100,7 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
     func start() {
         status = manager.authorizationStatus
         switch status {
-        case .notDetermined: manager.requestWhenInUseAuthorization()
+        case .notDetermined: promptedThisSession = true; manager.requestWhenInUseAuthorization()
         case .authorizedWhenInUse, .authorizedAlways: locationDenied = false; beginUpdates()
         case .denied, .restricted: noteDenied(); myCoord = nil
         @unknown default: break
@@ -97,8 +122,11 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
         case .authorizedWhenInUse, .authorizedAlways:
             locationDenied = false
             selectionSource = .gps              // let GPS override a prior .tap selection
+            warnedOutOfCoverage = false         // an explicit press always gets a fresh answer
+            forceNextReframe = true             // camera must respond even if the precinct is the same
             if let c = myCoord { selectByGPS(c) } else { beginUpdates() }
         case .notDetermined:
+            promptedThisSession = true
             manager.requestWhenInUseAuthorization()
         case .denied, .restricted:
             locationDenied = true               // re-trigger the "Location is off" alert
@@ -126,18 +154,50 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
         let coord = CLLocationCoordinate2D(latitude: lat, longitude: lon)
         guard let hit = PrecinctDB.shared.lookup(lon: lon, lat: lat) else {
             tap(0.4)   // soft "nothing here" cue
-            toast = "No precinct here. Tap on land."
+            // A miss NEAR precincts is water or a boundary gap; only a genuinely
+            // out-of-coverage miss earns the coverage recital.
+            toast = PrecinctDB.shared.hasPrecincts(nearLon: lon, lat: lat)
+                ? "No precinct here. Try tapping on land."
+                : "No precincts here yet. Precinct covers \(Coverage.abbrList), with more coming."
             return
         }
         let p = hit.profile
-        if p.state != selectedState {
-            tap(0.4)
-            toast = "Outside \(stateName(selectedState)). That's in \(stateName(p.state)). Switch states from the menu."
-            return
-        }
         selectionSource = .tap
         tap()
+        // A DB hit is always in a covered state, so just follow the tap there instead of refusing.
+        if p.state != selectedState, appStates.contains(where: { $0.abbr == p.state }) {
+            selectedState = p.state
+            toast = "Switched to \(stateName(p.state))."
+        }
         loadDetails(p, rings: hit.rings, at: coord)
+        maybeShowByNumbersTip()
+    }
+
+    /// One-time discovery nudge: after a few deliberate taps, point at the page most
+    /// people never find on their own. Skipped whenever another toast is already up.
+    private func maybeShowByNumbersTip() {
+        sessionTapCount += 1
+        guard sessionTapCount >= 3, toast == nil,
+              !UserDefaults.standard.bool(forKey: "tippedByNumbers") else { return }
+        UserDefaults.standard.set(true, forKey: "tippedByNumbers")
+        toast = "By the Numbers ranks every precinct in the state. It's the chart button at the top right."
+    }
+
+    /// Select an exact precinct by id (from a leaderboard drill-in). Bypasses point-in-polygon so a
+    /// concave precinct whose bbox center sits outside itself still resolves to the right shape.
+    func selectByUnitID(_ unitID: String) {
+        guard let hit = PrecinctDB.shared.lookupByUnitID(unitID),
+              let bb = Self.boundingBox(of: hit.rings) else { return }
+        let p = hit.profile
+        selectionSource = .tap
+        tap()
+        if p.state != selectedState, appStates.contains(where: { $0.abbr == p.state }) {
+            selectedState = p.state
+            toast = "Switched to \(stateName(p.state))."   // same feedback as a cross-state tap
+        }
+        loadDetails(p, rings: hit.rings,
+                    at: CLLocationCoordinate2D(latitude: (bb.minLat + bb.maxLat) / 2,
+                                               longitude: (bb.minLon + bb.maxLon) / 2))
     }
 
     /// Switch the whole view to another state and land on its main city.
@@ -157,7 +217,7 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
             // Worded so it's also true for covered-state users standing on water.
             if !warnedOutOfCoverage {
                 warnedOutOfCoverage = true
-                toast = "No precinct at your location. Precinct covers NY, CA, MA, and TX. Tap the map to explore."
+                toast = "No precinct at your location yet. Precinct covers \(Coverage.abbrList), with more coming. Tap the map to look around."
             }
             return
         }
@@ -165,6 +225,9 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
         ProfileStore.save(p)                       // widget always reflects where you ARE
         WidgetCenter.shared.reloadTimelines(ofKind: "PrecinctWidget")
         WidgetCenter.shared.reloadTimelines(ofKind: "PrecinctLockWidget")
+        if appStates.contains(where: { $0.abbr == p.state }) {
+            UserDefaults.standard.set(p.state, forKey: "lastGeoState")   // open here next launch, not Times Square
+        }
         guard selectionSource != .tap else { return }  // don't interrupt active exploration
         selectionSource = .gps
         if appStates.contains(where: { $0.abbr == p.state }) { selectedState = p.state }
@@ -173,9 +236,16 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
 
     private func loadDetails(_ p: PrecinctProfile, rings: [[CLLocationCoordinate2D]],
                              at coord: CLLocationCoordinate2D) {
+        // Fly the camera only when the selection actually changes (or a locate press asked).
+        // Bumping the serial on every load made each re-tap animate the camera for nothing.
+        let precinctChanged = p.unitID != selection?.unitID
         selection = p
         selectionCoord = coord
         selectedRings = rings
+        if precinctChanged || forceNextReframe {
+            forceNextReframe = false
+            selectionSerial &+= 1
+        }
         presidentTrend = PrecinctDB.shared.electionSeries(unitID: p.unitID)
             .filter { $0.office == "president" && $0.demShare != nil }
             .sorted { $0.year < $1.year }
@@ -208,7 +278,7 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
                 // polygons mid-animation makes both the fly and the tap feel laggy; this lets the
                 // sheet + selected shape paint instantly and the tint arrive a beat later.
                 try? await Task.sleep(nanoseconds: 280_000_000)
-                await MainActor.run {
+                await MainActor.run { [weak self] in
                     guard let self, self.loadedCounty == countyKey else { return }   // a newer county won the race
                     self.neighborPins = pins
                 }
@@ -239,11 +309,20 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
         switch status {
         case .authorizedWhenInUse, .authorizedAlways:
             locationDenied = false
+            promptedThisSession = false
             UserDefaults.standard.set(false, forKey: "warnedLocationDenied")   // a later revoke warns once again
             beginUpdates()
         case .denied, .restricted:
-            noteDenied()
             myCoord = nil                    // don't leave a stale "you" pin
+            if promptedThisSession {
+                // The user just answered the system prompt; a modal here reads as asking
+                // again. Acknowledge quietly and mark this denial as warned.
+                promptedThisSession = false
+                UserDefaults.standard.set(true, forKey: "warnedLocationDenied")
+                toast = "Location is off. You can still tap anywhere on the map, or switch states from the menu at the top."
+            } else {
+                noteDenied()
+            }
         default:
             break
         }

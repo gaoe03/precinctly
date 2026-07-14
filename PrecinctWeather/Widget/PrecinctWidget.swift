@@ -12,6 +12,7 @@ struct PrecinctEntry: TimelineEntry {
     let rings: [[CLLocationCoordinate2D]]   // the precinct's shape, for the mini-map chip
     let shiftPts: Int?                       // presidential margin shift, earliest→latest (+ = toward Dem)
     let shiftSinceYear: Int?                 // the earliest year in that span (usually 2016)
+    var outOfCoverage = false                // had a fix, but it fell outside NY/CA/MA/TX
 }
 
 /// `NSWidgetWantsLocation` grants location access while the app is authorized, so the widget
@@ -70,10 +71,12 @@ struct PrecinctProvider: TimelineProvider {
             let loc = await currentLocation()
             let profile: PrecinctProfile?
             let rings: [[CLLocationCoordinate2D]]
+            var outOfCoverage = false
             if let loc {
                 let hit = PrecinctDB.shared.lookup(lon: loc.coordinate.longitude, lat: loc.coordinate.latitude)
                 profile = hit?.profile
                 rings = hit?.rings ?? []                       // already decoded by lookup
+                outOfCoverage = hit == nil                     // located, but not in a covered state
             } else if let cached = ProfileStore.load() {
                 profile = cached
                 rings = PrecinctDB.shared.exteriorRings(unitID: cached.unitID)
@@ -93,7 +96,8 @@ struct PrecinctProvider: TimelineProvider {
                 }
             }
             completion(PrecinctEntry(date: Date(), profile: profile, rings: rings,
-                                     shiftPts: shiftPts, shiftSinceYear: sinceYear))
+                                     shiftPts: shiftPts, shiftSinceYear: sinceYear,
+                                     outOfCoverage: outOfCoverage))
         }
     }
 }
@@ -150,7 +154,7 @@ struct PrecinctHomeView: View {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(p.precinctName ?? "Precinct").font(.caption2.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.7)
+                        Text(precinctTitle(p)).font(.caption2.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.7)
                         Text("\(countyDisplay(p.borough)), \(p.state)").font(.caption2).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
                     }
                     Spacer(minLength: 2)
@@ -166,7 +170,8 @@ struct PrecinctHomeView: View {
                 if let top = p.raceBreakdown.first {
                     Text("\(pctStr(top.value)) \(top.label)").font(.caption2.weight(.medium)).lineLimit(1).minimumScaleFactor(0.7)
                 }
-                Text(statsLineA(p)).font(.caption2).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
+                // No income/turnout line: seven shrunken text rows crowded the small face, and
+                // its clamped turnout figure dodged the honesty gate the app enforces everywhere.
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         }
@@ -181,7 +186,7 @@ struct PrecinctHomeView: View {
                     HStack(alignment: .top, spacing: 6) {
                         Image("WidgetPin").resizable().scaledToFit().frame(width: 15, height: 18)
                         VStack(alignment: .leading, spacing: 0) {
-                            Text(p.precinctName ?? "Precinct").font(.caption.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.7)
+                            Text(precinctTitle(p)).font(.caption.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.7)
                             Text("\(countyDisplay(p.borough)), \(p.state)").font(.caption2).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
                         }
                         if !e.rings.isEmpty { Spacer(minLength: 4); precinctChip(e.rings, lean) }
@@ -228,20 +233,26 @@ struct PrecinctHomeView: View {
         return shiftLabel(e.shiftPts, e.shiftSinceYear)
     }
 
-    private func statsLineA(_ p: PrecinctProfile) -> String {
-        var parts: [String] = []
-        if let inc = p.incomeMedian { parts.append(moneyShort(inc)) }
-        if let t = p.turnoutEst { parts.append("\(pctStr(min(t, 1))) turnout") }
-        return parts.joined(separator: ", ")
-    }
-
     private var placeholder: some View {
-        VStack(spacing: 4) {
-            Image(systemName: "mappin.and.ellipse").font(.title2)
-            Text("Open Precinct and allow precise location").font(.caption)
+        VStack(spacing: 6) {
+            Image("WidgetPin").resizable().scaledToFit().frame(width: 20, height: 24)
+            Text(entry.outOfCoverage
+                 ? "No precinct here yet. Precinct covers \(Coverage.abbrList)."
+                 : "Open Precinct and allow precise location").font(.caption)
                 .multilineTextAlignment(.center).foregroundStyle(.secondary)
         }
     }
+}
+
+/// CA precinct names are bare SOS ids ("7602", "1290023A"); prefix those so the widget doesn't
+/// title itself with a naked number. NY ("AD 75 ED 14") and MA ("...Precinct 1") already read fine.
+/// Zero-padded ids ("000363") are stripped first so titles read "Precinct 363".
+private func precinctTitle(_ p: PrecinctProfile) -> String {
+    guard let raw = p.precinctName, !raw.isEmpty else { return "Precinct" }
+    let n = precinctDisplayName(raw)
+    if n.localizedCaseInsensitiveContains("precinct") { return n }
+    if let f = n.first, f.isNumber, !n.contains(" ") { return "Precinct \(n)" }
+    return n
 }
 
 // MARK: - Hand-drawn-style widget components (static; widgets can't run live filters)
@@ -252,8 +263,8 @@ private struct TwoPartyBarW: View {
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
-                Rectangle().fill(WidgetColor.lean(0.12))
-                Rectangle().fill(WidgetColor.lean(0.9)).frame(width: max(4, geo.size.width * demShare))
+                Rectangle().fill(WidgetColor.rep)
+                Rectangle().fill(WidgetColor.dem).frame(width: max(4, geo.size.width * demShare))
             }
             .clipShape(Capsule())
             .overlay(Capsule().strokeBorder(WidgetColor.ink, lineWidth: 1.2))
@@ -324,14 +335,19 @@ struct PrecinctLockView: View {
         case .accessoryInline:
             Text(inlineText(p))
         case .accessoryCircular:
-            Gauge(value: p?.leanDemShare ?? 0.5) {
+            // The lean margin itself, not a capacity ring (which reads as a battery).
+            ZStack {
+                AccessoryWidgetBackground()
                 Text(p?.leanShort ?? "—")
+                    .font(.system(.headline, design: .serif)).widgetAccentable()
+                    .minimumScaleFactor(0.5).lineLimit(1).padding(4)
             }
-            .gaugeStyle(.accessoryCircularCapacity)
         default: // accessoryRectangular
             VStack(alignment: .leading, spacing: 1) {
-                Text(p?.precinctName ?? p?.borough ?? "Precinct").font(.headline).widgetAccentable().lineLimit(1)
-                Text(p.map { "\(countyDisplay($0.borough)), \($0.state)" } ?? "Open Precinct").font(.caption2).lineLimit(1)
+                Text(p.map(precinctTitle) ?? "Precinct").font(.headline).widgetAccentable().lineLimit(1)
+                Text(p.map { "\(countyDisplay($0.borough)), \($0.state)" }
+                     ?? (entry.outOfCoverage ? "No precinct here yet" : "Open Precinct"))
+                    .font(.caption2).lineLimit(1)
                 Text("\(p?.leanShort ?? "—")" + (rectSubline(p).map { ", \($0)" } ?? "")).font(.caption).lineLimit(1)
                 if let p, let top = p.raceBreakdown.first {
                     Text("\(pctStr(top.value)) \(top.label)" + (p.incomeMedian.map { ", \(moneyShort($0))" } ?? ""))
@@ -349,7 +365,7 @@ struct PrecinctLockView: View {
     }
 
     private func inlineText(_ p: PrecinctProfile?) -> String {
-        guard let p else { return "Precinct: open app" }
+        guard let p else { return entry.outOfCoverage ? "No precinct here yet" : "Open Precinct" }
         var parts = [p.leanShort]
         if let top = p.raceBreakdown.first { parts.append("\(pctStr(top.value)) \(top.label)") }
         if let inc = p.incomeMedian { parts.append(moneyShort(inc)) }
@@ -387,6 +403,9 @@ private enum WidgetColor {
         let t = max(0, min(1, s))
         return t >= 0.5 ? lerp(purple, blue, (t - 0.5) * 2) : lerp(red, purple, t * 2)
     }
+    /// Party anchors, same values as the app's Palette.dem/.rep.
+    static let dem = lean(0.9)
+    static let rep = lean(0.1)
     /// Adapts to the widget's light/dark rendering so text (which uses adaptive .primary/.secondary)
     /// always contrasts the paper — fixes white-on-light-paper in dark mode.
     private static func dynamic(_ light: (Double, Double, Double), _ dark: (Double, Double, Double)) -> Color {

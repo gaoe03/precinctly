@@ -40,6 +40,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.gaoe.PrecinctWeather
         INFOPLIST_FILE: App/Info.plist
         CODE_SIGN_ENTITLEMENTS: App/App.entitlements
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor   # slate ink; blue means Democrat, so don't default the chrome to system blue
     dependencies:
       - target: PrecinctKit
         embed: true

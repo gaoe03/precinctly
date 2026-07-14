@@ -13,6 +13,8 @@ struct ContentView: View {
     @State private var showNeighbors = false
     @AppStorage("hasOnboarded") private var hasOnboarded = false
     @AppStorage("defaultState") private var defaultState = "NY"
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         ZStack {
@@ -22,17 +24,18 @@ struct ContentView: View {
         .overlay(alignment: .topLeading) { searchControl.padding(.leading, 12).padding(.top, 8) }
         .overlay(alignment: .topTrailing) { actionControls.padding(.trailing, 12).padding(.top, 8) }
         .overlay(alignment: .bottomTrailing) {
-            locateControl.padding(.trailing, 12).padding(.bottom, 202)   // float above the 190pt sheet peek
+            locateControl.padding(.trailing, 12)
+                .padding(.bottom, BottomPanel.peekHeight(for: dynamicTypeSize) + 12)   // float above the sheet peek
         }
         .onAppear {
-            if model.selection == nil { camera = .region(initialRegion(for: defaultState)) }
+            if model.selection == nil { camera = .region(initialRegion(for: model.selectedState)) }
             // First run: onboarding explains the app BEFORE the location permission dialog,
             // so start() (which triggers the prompt) waits for the card to be dismissed.
             if hasOnboarded { model.start() }
         }
-        .onChange(of: model.selection?.unitID) {
+        .onChange(of: model.selectionSerial) {
             if let r = model.selectionRegion {
-                withAnimation(.easeInOut(duration: 0.25)) { camera = .region(r) }
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { camera = .region(r) }
                 showNeighbors = true                          // a selection always lands zoomed-in
             }
         }
@@ -104,12 +107,12 @@ struct ContentView: View {
             // presentation machinery (and the permission dialog) and could never appear.
             if !hasOnboarded {
                 OnboardingCard {
-                    withAnimation(.easeOut(duration: 0.25)) { hasOnboarded = true }
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) { hasOnboarded = true }
                     model.start()
                 }
             }
         }
-        .animation(.default, value: model.toast)
+        .animation(reduceMotion ? .none : .default, value: model.toast)
         .alert("Location is off", isPresented: $model.locationDenied) {
             Button("Open Settings") {
                 if let url = URL(string: UIApplication.openSettingsURLString) {
@@ -169,6 +172,8 @@ struct ContentView: View {
                     }
                 }
             }
+            Divider()
+            Button("More states soon") {}.disabled(true)
         } label: {
             HStack(spacing: 4) {
                 Text(stateName(model.selectedState)).font(.subheadline.weight(.semibold))
@@ -176,7 +181,11 @@ struct ContentView: View {
                 Image(systemName: "chevron.down").font(.caption2)
             }
             .padding(.horizontal, 14).padding(.vertical, 8)
-            .background(.regularMaterial, in: Capsule())
+            // Near-opaque with a hairline: the frosted material picked up whatever lean color
+            // sat under it and read muddy and borderless over a saturated county.
+            .background(.thickMaterial, in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.12)))
+            .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
         }
         .accessibilityLabel("Switch state, currently \(stateName(model.selectedState))")
     }
@@ -187,7 +196,7 @@ struct ContentView: View {
             .padding(.horizontal, 14).padding(.vertical, 8)
             .background(.thinMaterial, in: Capsule())
             .padding(.horizontal, 30)
-            .transition(.move(edge: .top).combined(with: .opacity))
+            .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
             .task(id: text) {
                 // Reading time, not a fixed 2.4s: the coverage/accuracy notices are full
                 // sentences and were gone before anyone could read them.
@@ -212,25 +221,24 @@ private struct PrecinctMap: View {
     @Binding var showNeighbors: Bool
     var expanded: Bool
     @AppStorage("colorNeighbors") private var colorNeighbors = true
-    @AppStorage("leanTintIntensity") private var leanTintIntensity = 1.0
+    @AppStorage("leanTintIntensity") private var leanTintIntensity = 0.75   // "Medium" default, must match SettingsView
 
-    // Drop the heavy county tint while the panel covers the map: when expanded the overlays
-    // are occluded anyway, and live-blurring hundreds of polygons under the growing material
-    // panel is what makes expanding feel janky.
-    // County tint stays on at every zoom (no longer gated on zoom level) so the colored-county
-    // view is always there. `showNeighbors` now only drives the find-my-precinct pin below.
-    private var tintVisible: Bool { colorNeighbors && !expanded && !model.neighborPins.isEmpty }
+    // County tint stays MOUNTED through expand/collapse: the tint is ~5 dissolved lean-region
+    // polygons now (not hundreds of precincts), and unmounting/remounting them on every panel
+    // toggle forced a full map-content rebuild that hitched the collapse. It stays on at every
+    // zoom too; `showNeighbors` only drives the find-my-precinct pin below.
+    private var tintVisible: Bool { colorNeighbors && !model.neighborPins.isEmpty }
 
     var body: some View {
         MapReader { proxy in
             Map(position: $camera, interactionModes: [.pan, .zoom, .rotate]) {
                 if tintVisible {
+                    // No per-pin selection check: region ids never match a precinct unit_id, and
+                    // referencing model.selection here made every tap re-diff all region polygons.
                     ForEach(model.neighborPins) { pin in
-                        if pin.id != model.selection?.unitID {
-                            ForEach(Array(pin.rings.enumerated()), id: \.offset) { _, ring in
-                                MapPolygon(coordinates: ring)
-                                    .foregroundStyle(Palette.lean(pin.demShare).opacity(0.52 * leanTintIntensity))   // fill only — cheaper than per-precinct strokes
-                            }
+                        ForEach(Array(pin.rings.enumerated()), id: \.offset) { _, ring in
+                            MapPolygon(coordinates: ring)
+                                .foregroundStyle(Palette.lean(pin.demShare).opacity(0.52 * leanTintIntensity))   // fill only — cheaper than per-precinct strokes
                         }
                     }
                 }
@@ -248,13 +256,22 @@ private struct PrecinctMap: View {
                     }
                 }
                 if let c = model.myCoord {
+                    // Slate ink, not system blue: on this map a saturated blue dot reads as
+                    // "Democrat", so the you-marker wears the neutral accent instead.
                     Annotation("You", coordinate: c) {
-                        Image(systemName: "location.fill")
-                            .font(.caption).padding(6)
-                            .background(.blue, in: Circle()).foregroundStyle(.white).shadow(radius: 2)
+                        ZStack {
+                            Circle().fill(.white).frame(width: 18, height: 18)
+                            Circle().fill(Color.accentColor).frame(width: 12, height: 12)
+                        }
+                        .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
                     }
                 }
             }
+            // Muted basemap so the lean tint stays the loudest thing on screen; all POI kept
+            // (shops, restaurants, parks, transit) because the map doubles as a way to orient
+            // and explore. Traffic is the one layer that adds nothing here.
+            .mapStyle(.standard(elevation: .flat, emphasis: .muted,
+                                pointsOfInterest: .all, showsTraffic: false))
             // A plain .onTapGesture on a Map waits to rule out the double-tap-to-zoom before it
             // fires (~0.3s of dead time on every tap). A *simultaneous* SpatialTapGesture is
             // recognized alongside the map's own gestures, so a single tap registers instantly.
@@ -278,8 +295,13 @@ private struct PrecinctMap: View {
 
 extension Font {
     /// Built-in SF Serif ("New York") display face. No font bundling.
+    /// `.system(size:)` fonts don't track Dynamic Type, so scale the point size with
+    /// UIFontMetrics (which reads the current traits during SwiftUI body eval and re-renders on
+    /// change). Capped at 1.4x so the fixed-height peek sheet can't overflow at accessibility sizes.
+    /// Upgrade path: per-call-site @ScaledMetric if a screen needs the full range.
     static func serifDisplay(_ size: CGFloat, _ weight: Font.Weight) -> Font {
-        .system(size: size, weight: weight, design: .serif)
+        let scaled = min(UIFontMetrics.default.scaledValue(for: size), size * 1.4)
+        return .system(size: scaled, weight: weight, design: .serif)
     }
 }
 

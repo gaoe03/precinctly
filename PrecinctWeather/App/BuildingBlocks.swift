@@ -33,8 +33,8 @@ struct TwoPartyBar: View {
     var body: some View {
         GeometryReader { geo in
             HStack(spacing: 0) {
-                Rectangle().fill(.blue).frame(width: geo.size.width * demShare)
-                Rectangle().fill(.red)
+                Rectangle().fill(Palette.dem).frame(width: geo.size.width * demShare)
+                Rectangle().fill(Palette.rep)
             }
         }
         .frame(height: 12).clipShape(Capsule())
@@ -48,7 +48,7 @@ struct BigStat: View {
     var valueColor: Color = .primary
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(value).font(.title2.bold()).foregroundStyle(valueColor)
+            Text(value).font(.title2.bold().monospacedDigit()).foregroundStyle(valueColor)
                 .contentTransition(.numericText())
                 .lineLimit(1).minimumScaleFactor(0.7)
             Text(label).font(.caption).foregroundStyle(.secondary)
@@ -67,7 +67,7 @@ struct SmallStat: View {
     init(_ title: String, _ value: String?) { self.title = title; self.value = value }
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(value ?? "—").font(.headline).contentTransition(.numericText())
+            Text(value ?? "—").font(.headline.monospacedDigit()).contentTransition(.numericText())
             Text(title).font(.caption2).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

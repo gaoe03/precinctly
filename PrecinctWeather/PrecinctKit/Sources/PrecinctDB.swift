@@ -56,6 +56,39 @@ public final class PrecinctDB {
         return nil
     }
 
+    /// Resolve a precinct by its unit_id (no point-in-polygon). Used when the caller already knows
+    /// the exact precinct (a leaderboard row), so a concave shape whose bbox center falls outside
+    /// itself can't select a neighbor. Reuses `row(id:)` for the profile parse.
+    public func lookupByUnitID(_ unitID: String)
+        -> (profile: PrecinctProfile, rings: [[CLLocationCoordinate2D]])? {
+        let sql = "SELECT rowid FROM precincts WHERE unit_id = ?"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, unitID, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        guard let (profile, wkb) = row(id: sqlite3_column_int(stmt, 0)) else { return nil }
+        return (profile, WKBGeometry.exteriorRings(wkb))
+    }
+
+    /// Cheap "am I near coverage" test: true if any precinct's bounding box comes within
+    /// `delta` degrees (~0.9 km at 0.008) of the point. Words the tap-miss toast honestly:
+    /// a miss NEAR precincts is water or a map gap; a far miss is an uncovered state.
+    public func hasPrecincts(nearLon lon: Double, lat: Double, within delta: Double = 0.008) -> Bool {
+        let sql = """
+            SELECT 1 FROM precinct_rtree
+            WHERE min_lon < ? AND max_lon > ? AND min_lat < ? AND max_lat > ? LIMIT 1
+            """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_double(stmt, 1, lon + delta)
+        sqlite3_bind_double(stmt, 2, lon - delta)
+        sqlite3_bind_double(stmt, 3, lat + delta)
+        sqlite3_bind_double(stmt, 4, lat - delta)
+        return sqlite3_step(stmt) == SQLITE_ROW
+    }
+
     private func candidateIDs(lon: Double, lat: Double) -> [Int32] {
         let sql = """
             SELECT id FROM precinct_rtree
@@ -261,6 +294,7 @@ public final class PrecinctDB {
         // every card is redundant — show the precinct id instead. Statewide, the county is the
         // useful locator. (Precinct names are SOS ids: "AD 65 ED 21" in NY, a number in CA.)
         func placeStr(_ boro: String, _ st: String, _ pname: String) -> String {
+            let pname = precinctDisplayName(pname)   // "000363" reads as "363"
             if county != nil {
                 if pname.isEmpty { return "\(countyDisplay(boro)), \(st)" }
                 // MA names already read "Chatham Town Precinct 1"; don't double the word.
@@ -298,7 +332,7 @@ public final class PrecinctDB {
                  fmt: (Double) -> String) {
             let sql = """
                 SELECT borough, state, precinct_name, \(column),
-                       (min_lon + max_lon) / 2.0, (min_lat + max_lat) / 2.0
+                       (min_lon + max_lon) / 2.0, (min_lat + max_lat) / 2.0, unit_id
                 FROM precincts
                 WHERE \(scope) AND \(column) IS NOT NULL\(filter.isEmpty ? "" : " AND \(filter)")
                 ORDER BY \(column) \(ascending ? "ASC" : "DESC"), pop_total DESC, unit_id ASC LIMIT 1
@@ -316,6 +350,7 @@ public final class PrecinctDB {
                                      ascending: ascending, displayKind: displayKind)
             facts.append(FunFact(id: id, icon: icon, title: title,
                                  value: fmt(sqlite3_column_double(stmt, 3)), place: place,
+                                 unitID: text(stmt, 6),
                                  lat: sqlite3_column_double(stmt, 5), lon: sqlite3_column_double(stmt, 4),
                                  category: category, kind: kind, pairKey: pairKey, subtitle: subtitle,
                                  tieCount: tieCnt(tie, filter: filter), leaderboard: lb))
@@ -330,7 +365,7 @@ public final class PrecinctDB {
                          fmt: (Double) -> String) {
             let sql = """
                 SELECT borough, state, precinct_name, (\(displayExpr)) AS v,
-                       (min_lon + max_lon) / 2.0, (min_lat + max_lat) / 2.0
+                       (min_lon + max_lon) / 2.0, (min_lat + max_lat) / 2.0, unit_id
                 FROM precincts
                 WHERE \(scope) AND (\(displayExpr)) IS NOT NULL\(filter.isEmpty ? "" : " AND \(filter)")
                 ORDER BY (\(orderExpr)) \(ascending ? "ASC" : "DESC"), pop_total DESC, unit_id ASC LIMIT 1
@@ -348,6 +383,7 @@ public final class PrecinctDB {
                                      ascending: ascending, displayKind: displayKind)
             facts.append(FunFact(id: id, icon: icon, title: title,
                                  value: fmt(sqlite3_column_double(stmt, 3)), place: place,
+                                 unitID: text(stmt, 6),
                                  lat: sqlite3_column_double(stmt, 5), lon: sqlite3_column_double(stmt, 4),
                                  category: category, kind: kind, pairKey: pairKey, subtitle: subtitle,
                                  tieCount: tieCnt(tie, filter: filter), leaderboard: lb))
@@ -374,7 +410,7 @@ public final class PrecinctDB {
 
             let sql = """
                 SELECT p.borough, p.state, p.precinct_name, (se.dem_share - ps.dem_share) AS v,
-                       (p.min_lon + p.max_lon) / 2.0, (p.min_lat + p.max_lat) / 2.0
+                       (p.min_lon + p.max_lon) / 2.0, (p.min_lat + p.max_lat) / 2.0, p.unit_id
                 FROM precincts p
                 JOIN precinct_elections ps ON ps.unit_id = p.unit_id AND ps.office = 'president' AND ps.year = \(y)
                 JOIN precinct_elections se ON se.unit_id = p.unit_id AND se.office = 'senate'    AND se.year = \(y)
@@ -395,6 +431,7 @@ public final class PrecinctDB {
             let place = placeStr(text(stmt, 0) ?? "", text(stmt, 1) ?? "", text(stmt, 2) ?? "")
             facts.append(FunFact(id: "crossover", icon: "arrow.left.arrow.right",
                                  title: "Ticket-splitters", value: value, place: place,
+                                 unitID: text(stmt, 6),
                                  lat: sqlite3_column_double(stmt, 5), lon: sqlite3_column_double(stmt, 4),
                                  category: .politics, kind: .insight,
                                  subtitle: "Split most between Senate and President"))

@@ -8,9 +8,10 @@ struct SearchView: View {
     @State private var query = ""
 
     private var places: [Neighborhood] {
-        let inState = searchPlaces.filter { $0.state == model.selectedState }
-        guard !query.isEmpty else { return inState }
-        return inState.filter {
+        // Browsing (no query) stays in-state; a typed query searches all four states, since
+        // selecting a place already switches states with a toast. "Boston" works from anywhere.
+        guard !query.isEmpty else { return searchPlaces.filter { $0.state == model.selectedState } }
+        return searchPlaces.filter {
             $0.name.localizedCaseInsensitiveContains(query) ||
             $0.borough.localizedCaseInsensitiveContains(query)
         }
@@ -24,16 +25,14 @@ struct SearchView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("Places") {
-                    ForEach(places) { n in
-                        Button { go(n.lat, n.lon) } label: {
-                            HStack {
+                if !places.isEmpty {
+                    Section("Places") {
+                        ForEach(places) { n in
+                            Button { go(n.lat, n.lon) } label: {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(n.name).foregroundStyle(.primary)
-                                    Text(n.borough).font(.caption).foregroundStyle(.secondary)
+                                    Text("\(n.borough), \(n.state)").font(.caption).foregroundStyle(.secondary)
                                 }
-                                Spacer()
-                                Image(systemName: "mappin.circle").foregroundStyle(.secondary)
                             }
                         }
                     }
@@ -42,22 +41,27 @@ struct SearchView: View {
                     Section("Precincts") {
                         ForEach(Array(precincts.enumerated()), id: \.offset) { _, p in
                             Button { go(p.lat, p.lon) } label: {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(p.name).foregroundStyle(.primary)
-                                        if !p.borough.isEmpty {
-                                            Text(p.borough).font(.caption).foregroundStyle(.secondary)
-                                        }
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(precinctDisplayName(p.name)).foregroundStyle(.primary)
+                                    if !p.borough.isEmpty {
+                                        Text(p.borough).font(.caption).foregroundStyle(.secondary)
                                     }
-                                    Spacer()
-                                    Image(systemName: "mappin.circle").foregroundStyle(.secondary)
                                 }
                             }
                         }
                     }
                 }
             }
-            .searchable(text: $query, prompt: "Search \(stateName(model.selectedState))")
+            .overlay {
+                if !query.isEmpty && places.isEmpty && precincts.isEmpty {
+                    ContentUnavailableView {
+                        Label("No results for \u{201C}\(query)\u{201D}", systemImage: "magnifyingglass")
+                    } description: {
+                        Text("Places match across all four states. Precinct names match within \(stateName(model.selectedState)).")
+                    }
+                }
+            }
+            .searchable(text: $query, prompt: "Search places and precincts")
             .navigationTitle("Search")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

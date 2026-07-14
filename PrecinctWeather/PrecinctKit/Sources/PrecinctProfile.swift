@@ -1,5 +1,23 @@
 import Foundation
 
+/// Single source of truth for the coverage recital. Five surfaces (toasts, onboarding,
+/// Settings, the widget placeholder) read these, so adding a state is a one-line change.
+public enum Coverage {
+    /// Abbreviated list for tight surfaces (toasts, widgets).
+    public static let abbrList = "NY, CA, MA, and TX"
+    /// Full-name sentence for calm surfaces (onboarding, Settings).
+    public static let namesSentence = "Precinct covers New York, California, Massachusetts, and Texas, with more states coming."
+}
+
+/// TX (and some CA) precinct names are zero-padded election ids ("000363"); strip the
+/// padding at display time so titles read "Precinct 363", not machine output. Names that
+/// don't start with a zero ("AD 65 ED 21", "Chatham Town Precinct 1") pass through.
+public func precinctDisplayName(_ raw: String) -> String {
+    guard raw.hasPrefix("0") else { return raw }
+    let stripped = raw.drop(while: { $0 == "0" })
+    return stripped.isEmpty ? "0" : String(stripped)
+}
+
 /// The `borough` column holds a bare county name everywhere except NYC, where it's a borough
 /// name. Append " County" for display — but never to the 5 NYC boroughs (you'd get the wrong /
 /// awkward name, e.g. "Brooklyn County" instead of Kings County).
@@ -91,12 +109,13 @@ public struct PrecinctProfile: Codable, Equatable, Sendable {
             .filter { $0.1 > 0 }.sorted { $0.1 > $1.1 }
     }
 
-    /// e.g. "D +18" / "R +5" / "Even" from the latest available president.
+    /// e.g. "D+18" / "R+5" / "Even" from the latest available president. Tight form matches the
+    /// trajectory bars, By-the-Numbers, the widgets, and the site.
     public var leanShort: String {
         guard let s = leanDemShare else { return "—" }
         let margin = Int((abs(s - 0.5) * 200).rounded())
         if margin < 1 { return "Even" }
-        return (s >= 0.5 ? "D +" : "R +") + "\(margin)"
+        return (s >= 0.5 ? "D+" : "R+") + "\(margin)"
     }
 
     public static let sample = PrecinctProfile(
