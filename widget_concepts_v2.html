@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Precinct widget concepts v2</title>
+<style>
+:root{
+  --paperL:#EDF0EB; --paperD:#1C1F24;
+  --gridL:#D1D9CF;  --gridD:#47505C;
+  --inkL:#29334D;   --inkD:#D1D9EB;
+  --secL:#6E7468;   --secD:#9AA1AC;
+  --dem:#375EDB; --rep:#C92D44;
+  --leanD49:#5852CC; --leanR91:#D22B35;
+  --serif:ui-serif,"New York",Georgia,serif;
+  --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;
+}
+body{margin:0;background:#F4F6F8;color:#15171C;font-family:var(--sans);padding:40px 24px 80px}
+.wrap{max-width:1080px;margin:0 auto}
+h1{font-family:var(--serif);font-size:34px;letter-spacing:-.02em;margin:0 0 6px}
+.dek{color:#5B616B;max-width:72ch;margin:0 0 8px}
+h2{font-family:var(--serif);font-size:22px;margin:44px 0 2px}
+.note{color:#5B616B;font-size:14px;max-width:78ch;margin:0 0 16px}
+.row{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start}
+.cap{font-size:11.5px;color:#8A909B;margin-top:6px;text-align:center}
+.cell{display:flex;flex-direction:column;align-items:center}
+
+/* ---- widget frames ---- */
+.w{width:176px;height:176px;border-radius:38px;position:relative;overflow:hidden;
+   box-shadow:0 4px 14px rgba(20,24,32,.14);flex:0 0 auto}
+.w.med{width:380px}
+.w.light{background:var(--paperL);color:var(--inkL)}
+.w.dark{background:var(--paperD);color:var(--inkD)}
+.w .sec{opacity:.62}
+.w{padding:16px;box-sizing:border-box}
+
+.title{font-size:11px;font-weight:650;line-height:1.15}
+.sub{font-size:10px}
+.lean{font-family:var(--serif);font-weight:800;letter-spacing:-.01em}
+.shift{font-size:10px;font-weight:500}
+.race{font-size:10px;font-weight:600}
+.bar{height:9px;border-radius:5px;overflow:hidden;display:flex}
+.bar i{display:block;height:100%}
+.bar .d{background:var(--dem)} .bar .r{background:var(--rep)}
+.w.light .bar{outline:1.2px solid rgba(41,51,77,.55);outline-offset:-1.2px}
+.w.dark  .bar{outline:1.2px solid rgba(209,217,235,.55);outline-offset:-1.2px}
+svg.pin{width:17px;height:21px;flex:0 0 auto}
+
+/* ================= A. ruled card ================= */
+.A .hr{height:1px;margin:7px -16px 7px -16px}
+.A.light .hr{background:var(--gridL)}
+.A.dark  .hr{background:var(--gridD)}
+.A .top{display:flex;justify-content:space-between;align-items:flex-start}
+.A .lean{font-size:34px;line-height:1}
+.A .foot{display:flex;justify-content:space-between;align-items:baseline;margin-top:7px}
+
+/* ================= B. shape hero ================= */
+.B svg.shape{position:absolute;right:-18px;bottom:-14px;width:130px;height:130px}
+.B.med svg.shape{right:158px;bottom:-14px;width:150px;height:150px}
+.B .top{display:flex;justify-content:space-between;align-items:flex-start;position:relative}
+.B .lean{font-size:36px;line-height:1;position:relative}
+.B .stack{position:absolute;left:16px;bottom:14px;right:16px}
+.B .stack .bar{width:96px;margin-top:6px}
+.B.med .stack .bar{width:150px}
+
+/* ================= C. split map swatch ================= */
+.C{padding:0}
+.C .map{height:74px;position:relative;overflow:hidden}
+.C.med .map{height:74px}
+.C.light .map{background:
+  linear-gradient(var(--gridL) 1px,transparent 1px) 0 0/28px 28px,
+  linear-gradient(90deg,var(--gridL) 1px,transparent 1px) 0 0/28px 28px,var(--paperL)}
+.C.dark .map{background:
+  linear-gradient(var(--gridD) 1px,transparent 1px) 0 0/28px 28px,
+  linear-gradient(90deg,var(--gridD) 1px,transparent 1px) 0 0/28px 28px,var(--paperD)}
+.C .map svg.shape{position:absolute;left:50%;top:50%;transform:translate(-50%,-46%);width:64px;height:64px}
+.C .map svg.pin{position:absolute;right:12px;top:10px}
+.C .body{padding:10px 16px 14px;position:relative}
+.C.light .body{background:var(--paperL);box-shadow:0 -1px 0 var(--gridL)}
+.C.dark  .body{background:var(--paperD);box-shadow:0 -1px 0 var(--gridD)}
+.C .lean{font-size:26px;line-height:1.05}
+.C .body .bar{margin-top:6px}
+.C .meta{display:flex;justify-content:space-between;align-items:baseline;margin-top:5px}
+
+/* ================= D. ink header band ================= */
+.D{padding:0}
+.D .band{display:flex;justify-content:space-between;align-items:center;padding:10px 16px}
+.D.light .band{background:var(--inkL);color:#EDF0EB}
+.D.dark  .band{background:#0E1116;color:var(--inkD)}
+.D .band .sub{opacity:.7}
+.D .body{padding:10px 16px 14px}
+.D .lean{font-size:32px;line-height:1.05}
+.D .body .bar{margin-top:7px}
+.D .meta{display:flex;justify-content:space-between;align-items:baseline;margin-top:6px}
+
+/* medium shared: left column + stat grid */
+.med .cols{display:flex;gap:14px;height:100%;box-sizing:border-box}
+.med .grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;align-content:center;flex:0 0 auto;min-width:128px}
+.med .grid2 .v{font-family:var(--serif);font-weight:660;font-size:14px;line-height:1;font-variant-numeric:tabular-nums}
+.med .grid2 .k{font-size:9px;margin-top:2px}
+.C.med .cols,.D.med .cols{height:auto}
+.reco{background:#fff;border:1px solid rgba(20,24,32,.12);border-radius:12px;padding:14px 18px;margin-top:36px;font-size:14px;color:#5B616B;max-width:78ch}
+.reco b{color:#15171C}
+</style>
+</head>
+<body><div class="wrap">
+<h1>Widget concepts v2</h1>
+<p class="dek">Four directions for the home widget. The complaint being solved: the current free-floating map grid runs underneath the text at arbitrary positions, so it reads as noise instead of structure. Each concept is shown as small light, small dark, medium, and a deep-red stress test. Nothing ships until you pick.</p>
+
+<!-- ============ A ============ -->
+<h2>A. Ruled card</h2>
+<p class="note">The grid becomes horizontal hairlines that sit exactly BETWEEN the content rows, like a ledger. Same survey-paper mood, but every line now aligns with the text because the lines are the row separators. Smallest change from today.</p>
+<div class="row">
+  <div class="cell"><div class="w A light">
+    <div class="top"><div><div class="title">AD 75 ED 14</div><div class="sub sec">Manhattan, NY</div></div>
+    <svg class="pin" viewBox="0 0 60 72"><g stroke="#33291f" stroke-width="3.4" stroke-linejoin="round"><path d="M30 5 C16 5 6 15 6 29 C6 45 30 67 30 67 C30 67 54 45 54 29 C54 15 44 5 30 5 Z" fill="#d44a40"/><circle cx="30" cy="28" r="9.5" fill="#f7f4ee"/></g></svg></div>
+    <div class="hr"></div>
+    <div class="lean" style="color:var(--leanD49)">D+49</div>
+    <div class="shift sec">D+6 since 2016</div>
+    <div class="hr"></div>
+    <div class="bar"><i class="d" style="width:74%"></i><i class="r" style="width:26%"></i></div>
+    <div class="foot"><span class="race">64% White</span><span class="sub sec">$89k</span></div>
+  </div><div class="cap">small, light</div></div>
+
+  <div class="cell"><div class="w A dark">
+    <div class="top"><div><div class="title">AD 75 ED 14</div><div class="sub sec">Manhattan, NY</div></div>
+    <svg class="pin" viewBox="0 0 60 72"><g stroke="#191512" stroke-width="3.4" stroke-linejoin="round"><path d="M30 5 C16 5 6 15 6 29 C6 45 30 67 30 67 C30 67 54 45 54 29 C54 15 44 5 30 5 Z" fill="#d44a40"/><circle cx="30" cy="28" r="9.5" fill="#f7f4ee"/></g></svg></div>
+    <div class="hr"></div>
+    <div class="lean" style="color:#8F8AE8">D+49</div>
+    <div class="shift sec">D+6 since 2016</div>
+    <div class="hr"></div>
+    <div class="bar"><i class="d" style="width:74%"></i><i class="r" style="width:26%"></i></div>
+    <div class="foot"><span class="race">64% White</span><span class="sub sec">$89k</span></div>
+  </div><div class="cap">small, dark</div></div>
+
+  <div class="cell"><div class="w A med light">
+    <div class="cols"><div style="flex:1;display:flex;flex-direction:column">
+      <div class="top"><div><div class="title">AD 75 ED 14</div><div class="sub sec">Manhattan, NY</div></div></div>
+      <div class="hr" style="margin-right:0"></div>
+      <div class="lean" style="font-size:38px;color:var(--leanD49)">D+49</div>
+      <div class="shift sec">D+6 since 2016</div>
+      <div class="bar" style="width:150px;margin-top:8px"><i class="d" style="width:74%"></i><i class="r" style="width:26%"></i></div>
+    </div>
+    <div class="grid2">
+      <div><div class="v">64%</div><div class="k sec">White</div></div><div><div class="v">$89k</div><div class="k sec">Income</div></div>
+      <div><div class="v">61%</div><div class="k sec">College</div></div><div><div class="v">38</div><div class="k sec">Median age</div></div>
+      <div><div class="v">82%</div><div class="k sec">Renters</div></div><div><div class="v">5.1k</div><div class="k sec">People</div></div>
+    </div></div>
+  </div><div class="cap">medium, light</div></div>
+
+  <div class="cell"><div class="w A light">
+    <div class="top"><div><div class="title">Precinct 615</div><div class="sub sec">Brooklyn, NY</div></div>
+    <svg class="pin" viewBox="0 0 60 72"><g stroke="#33291f" stroke-width="3.4" stroke-linejoin="round"><path d="M30 5 C16 5 6 15 6 29 C6 45 30 67 30 67 C30 67 54 45 54 29 C54 15 44 5 30 5 Z" fill="#d44a40"/><circle cx="30" cy="28" r="9.5" fill="#f7f4ee"/></g></svg></div>
+    <div class="hr"></div>
+    <div class="lean" style="color:var(--leanR91)">R+91</div>
+    <div class="shift sec">R+4 since 2016</div>
+    <div class="hr"></div>
+    <div class="bar"><i class="d" style="width:5%"></i><i class="r" style="width:95%"></i></div>
+    <div class="foot"><span class="race">90% White</span><span class="sub sec">$52k</span></div>
+  </div><div class="cap">red stress test</div></div>
+</div>
+
+<!-- ============ B ============ -->
+<h2>B. Shape hero</h2>
+<p class="note">No grid at all. Your actual precinct's polygon becomes the art, big, lean-tinted, anchored bottom-right where it never touches the text. The widget answers "where am I and what is this block" in one glance. Most distinctive of the four.</p>
+<div class="row">
+  <div class="cell"><div class="w B light">
+    <svg class="shape" viewBox="0 0 100 100"><polygon points="18,30 62,12 88,34 84,72 46,88 12,66" fill="rgba(88,82,204,.20)" stroke="#5852CC" stroke-width="2.4" stroke-linejoin="round"/></svg>
+    <div class="top"><div><div class="title">AD 75 ED 14</div><div class="sub sec">Manhattan, NY</div></div>
+    <svg class="pin" viewBox="0 0 60 72"><g stroke="#33291f" stroke-width="3.4" stroke-linejoin="round"><path d="M30 5 C16 5 6 15 6 29 C6 45 30 67 30 67 C30 67 54 45 54 29 C54 15 44 5 30 5 Z" fill="#d44a40"/><circle cx="30" cy="28" r="9.5" fill="#f7f4ee"/></g></svg></div>
+    <div class="stack">
+      <div class="lean" style="color:var(--leanD49)">D+49</div>
+      <div class="shift sec">D+6 since 2016</div>
+      <div class="bar"><i class="d" style="width:74%"></i><i class="r" style="width:26%"></i></div>
+    </div>
+  </div><div class="cap">small, light</div></div>
+
+  <div class="cell"><div class="w B dark">
+    <svg class="shape" viewBox="0 0 100 100"><polygon points="18,30 62,12 88,34 84,72 46,88 12,66" fill="rgba(143,138,232,.16)" stroke="#8F8AE8" stroke-width="2.4" stroke-linejoin="round"/></svg>
+    <div class="top"><div><div class="title">AD 75 ED 14</div><div class="sub sec">Manhattan, NY</div></div>
+    <svg class="pin" viewBox="0 0 60 72"><g stroke="#191512" stroke-width="3.4" stroke-linejoin="round"><path d="M30 5 C16 5 6 15 6 29 C6 45 30 67 30 67 C30 67 54 45 54 29 C54 15 44 5 30 5 Z" fill="#d44a40"/><circle cx="30" cy="28" r="9.5" fill="#f7f4ee"/></g></svg></div>
+    <div class="stack">
+      <div class="lean" style="color:#8F8AE8">D+49</div>
+      <div class="shift sec">D+6 since 2016</div>
+      <div class="bar"><i class="d" style="width:74%"></i><i class="r" style="width:26%"></i></div>
+    </div>
+  </div><div class="cap">small, dark</div></div>
+
+  <div class="cell"><div class="w B med light">
+    <svg class="shape" viewBox="0 0 100 100"><polygon points="18,30 62,12 88,34 84,72 46,88 12,66" fill="rgba(88,82,204,.20)" stroke="#5852CC" stroke-width="2.4" stroke-linejoin="round"/></svg>
+    <div class="cols"><div style="flex:1;display:flex;flex-direction:column">
+      <div><div class="title">AD 75 ED 14</div><div class="sub sec">Manhattan, NY</div></div>
+      <div class="lean" style="font-size:38px;color:var(--leanD49);margin-top:14px">D+49</div>
+      <div class="shift sec">D+6 since 2016</div>
+      <div class="bar" style="width:150px;margin-top:8px"><i class="d" style="width:74%"></i><i class="r" style="width:26%"></i></div>
+    </div>
+    <div class="grid2" style="position:relative">
+      <div><div class="v">64%</div><div class="k sec">White</div></div><div><div class="v">$89k</div><div class="k sec">Income</div></div>
+      <div><div class="v">61%</div><div class="k sec">College</div></div><div><div class="v">38</div><div class="k sec">Median age</div></div>
+      <div><div class="v">82%</div><div class="k sec">Renters</div></div><div><div class="v">5.1k</div><div class="k sec">People</div></div>
+    </div></div>
+  </div><div class="cap">medium, light (shape behind the lean column)</div></div>
+
+  <div class="cell"><div class="w B light">
+    <svg class="shape" viewBox="0 0 100 100"><polygon points="24,14 78,22 88,58 62,88 22,80 10,44" fill="rgba(210,43,53,.16)" stroke="#D22B35" stroke-width="2.4" stroke-linejoin="round"/></svg>
+    <div class="top"><div><div class="title">Precinct 615</div><div class="sub sec">Brooklyn, NY</div></div>
+    <svg class="pin" viewBox="0 0 60 72"><g stroke="#33291f" stroke-width="3.4" stroke-linejoin="round"><path d="M30 5 C16 5 6 15 6 29 C6 45 30 67 30 67 C30 67 54 45 54 29 C54 15 44 5 30 5 Z" fill="#d44a40"/><circle cx="30" cy="28" r="9.5" fill="#f7f4ee"/></g></svg></div>
+    <div class="stack">
+      <div class="lean" style="color:var(--leanR91)">R+91</div>
+      <div class="shift sec">R+4 since 2016</div>
+      <div class="bar"><i class="d" style="width:5%"></i><i class="r" style="width:95%"></i></div>
+    </div>
+  </div><div class="cap">red stress test</div></div>
+</div>
+
+<!-- ============ C ============ -->
+<h2>C. Split map swatch</h2>
+<p class="note">The grid survives, but only inside a clearly-bounded map band at the top with the precinct shape centered in it. Text lives on clean paper below a rule. Keeps the most of today's identity while making the grid mean something: that part IS the map.</p>
+<div class="row">
+  <div class="cell"><div class="w C light">
+    <div class="map">
+      <svg class="shape" viewBox="0 0 100 100"><polygon points="18,30 62,12 88,34 84,72 46,88 12,66" fill="rgba(88,82,204,.22)" stroke="#5852CC" stroke-width="3" stroke-linejoin="round"/></svg>
+      <svg class="pin" viewBox="0 0 60 72"><g stroke="#33291f" stroke-width="3.4" stroke-linejoin="round"><path d="M30 5 C16 5 6 15 6 29 C6 45 30 67 30 67 C30 67 54 45 54 29 C54 15 44 5 30 5 Z" fill="#d44a40"/><circle cx="30" cy="28" r="9.5" fill="#f7f4ee"/></g></svg>
+    </div>
+    <div class="body">
+      <div class="lean" style="color:var(--leanD49)">D+49</div>
+      <div class="bar"><i class="d" style="width:74%"></i><i class="r" style="width:26%"></i></div>
+      <div class="meta"><span class="title">AD 75 ED 14</span><span class="sub sec">Manhattan</span></div>
+    </div>
+  </div><div class="cap">small, light</div></div>
+
+  <div class="cell"><div class="w C dark">
+    <div class="map">
+      <svg class="shape" viewBox="0 0 100 100"><polygon points="18,30 62,12 88,34 84,72 46,88 12,66" fill="rgba(143,138,232,.18)" stroke="#8F8AE8" stroke-width="3" stroke-linejoin="round"/></svg>
+      <svg class="pin" viewBox="0 0 60 72"><g stroke="#191512" stroke-width="3.4" stroke-linejoin="round"><path d="M30 5 C16 5 6 15 6 29 C6 45 30 67 30 67 C30 67 54 45 54 29 C54 15 44 5 30 5 Z" fill="#d44a40"/><circle cx="30" cy="28" r="9.5" fill="#f7f4ee"/></g></svg>
+    </div>
+    <div class="body">
+      <div class="lean" style="color:#8F8AE8">D+49</div>
+      <div class="bar"><i class="d" style="width:74%"></i><i class="r" style="width:26%"></i></div>
+      <div class="meta"><span class="title">AD 75 ED 14</span><span class="sub sec">Manhattan</span></div>
+    </div>
+  </div><div class="cap">small, dark</div></div>
+
+  <div class="cell"><div class="w C med light">
+    <div class="map">
+      <svg class="shape" viewBox="0 0 100 100" style="left:26%"><polygon points="18,30 62,12 88,34 84,72 46,88 12,66" fill="rgba(88,82,204,.22)" stroke="#5852CC" stroke-width="3" stroke-linejoin="round"/></svg>
+      <svg class="pin" viewBox="0 0 60 72"><g stroke="#33291f" stroke-width="3.4" stroke-linejoin="round"><path d="M30 5 C16 5 6 15 6 29 C6 45 30 67 30 67 C30 67 54 45 54 29 C54 15 44 5 30 5 Z" fill="#d44a40"/><circle cx="30" cy="28" r="9.5" fill="#f7f4ee"/></g></svg>
+    </div>
+    <div class="body"><div class="cols">
+      <div style="flex:1">
+        <div class="lean" style="color:var(--leanD49)">D+49</div>
+        <div class="bar" style="width:150px"><i class="d" style="width:74%"></i><i class="r" style="width:26%"></i></div>
+        <div class="meta" style="justify-content:flex-start;gap:8px"><span class="title">AD 75 ED 14</span><span class="sub sec">Manhattan, NY</span></div>
+      </div>
+      <div class="grid2" style="min-width:120px;grid-template-columns:1fr 1fr;gap:4px 12px">
+        <div><div class="v">64%</div><div class="k sec">White</div></div><div><div class="v">$89k</div><div class="k sec">Income</div></div>
+        <div><div class="v">38</div><div class="k sec">Median age</div></div><div><div class="v">82%</div><div class="k sec">Renters</div></div>
+      </div>
+    </div></div>
+  </div><div class="cap">medium, light</div></div>
+
+  <div class="cell"><div class="w C light">
+    <div class="map">
+      <svg class="shape" viewBox="0 0 100 100"><polygon points="24,14 78,22 88,58 62,88 22,80 10,44" fill="rgba(210,43,53,.18)" stroke="#D22B35" stroke-width="3" stroke-linejoin="round"/></svg>
+      <svg class="pin" viewBox="0 0 60 72"><g stroke="#33291f" stroke-width="3.4" stroke-linejoin="round"><path d="M30 5 C16 5 6 15 6 29 C6 45 30 67 30 67 C30 67 54 45 54 29 C54 15 44 5 30 5 Z" fill="#d44a40"/><circle cx="30" cy="28" r="9.5" fill="#f7f4ee"/></g></svg>
+    </div>
+    <div class="body">
+      <div class="lean" style="color:var(--leanR91)">R+91</div>
+      <div class="bar"><i class="d" style="width:5%"></i><i class="r" style="width:95%"></i></div>
+      <div class="meta"><span class="title">Precinct 615</span><span class="sub sec">Brooklyn</span></div>
+    </div>
+  </div><div class="cap">red stress test</div></div>
+</div>
+
+<!-- ============ D ============ -->
+<h2>D. Ink header band</h2>
+<p class="note">The slate accent from the app becomes a solid header band holding the place name and pin; the body is clean paper. Boldest and most "designed app" of the four, instantly recognizable on a busy home screen, but the least map-flavored.</p>
+<div class="row">
+  <div class="cell"><div class="w D light">
+    <div class="band"><div><div class="title">AD 75 ED 14</div><div class="sub">Manhattan, NY</div></div>
+    <svg class="pin" viewBox="0 0 60 72"><g stroke="#191512" stroke-width="3.4" stroke-linejoin="round"><path d="M30 5 C16 5 6 15 6 29 C6 45 30 67 30 67 C30 67 54 45 54 29 C54 15 44 5 30 5 Z" fill="#d44a40"/><circle cx="30" cy="28" r="9.5" fill="#f7f4ee"/></g></svg></div>
+    <div class="body">
+      <div class="lean" style="color:var(--leanD49)">D+49</div>
+      <div class="shift sec">D+6 since 2016</div>
+      <div class="bar"><i class="d" style="width:74%"></i><i class="r" style="width:26%"></i></div>
+      <div class="meta"><span class="race">64% White</span><span class="sub sec">$89k</span></div>
+    </div>
+  </div><div class="cap">small, light</div></div>
+
+  <div class="cell"><div class="w D dark">
+    <div class="band"><div><div class="title">AD 75 ED 14</div><div class="sub">Manhattan, NY</div></div>
+    <svg class="pin" viewBox="0 0 60 72"><g stroke="#191512" stroke-width="3.4" stroke-linejoin="round"><path d="M30 5 C16 5 6 15 6 29 C6 45 30 67 30 67 C30 67 54 45 54 29 C54 15 44 5 30 5 Z" fill="#d44a40"/><circle cx="30" cy="28" r="9.5" fill="#f7f4ee"/></g></svg></div>
+    <div class="body">
+      <div class="lean" style="color:#8F8AE8">D+49</div>
+      <div class="shift sec">D+6 since 2016</div>
+      <div class="bar"><i class="d" style="width:74%"></i><i class="r" style="width:26%"></i></div>
+      <div class="meta"><span class="race">64% White</span><span class="sub sec">$89k</span></div>
+    </div>
+  </div><div class="cap">small, dark</div></div>
+
+  <div class="cell"><div class="w D med light">
+    <div class="band"><div style="display:flex;gap:8px;align-items:baseline"><span class="title">AD 75 ED 14</span><span class="sub">Manhattan, NY</span></div>
+    <svg class="pin" viewBox="0 0 60 72"><g stroke="#191512" stroke-width="3.4" stroke-linejoin="round"><path d="M30 5 C16 5 6 15 6 29 C6 45 30 67 30 67 C30 67 54 45 54 29 C54 15 44 5 30 5 Z" fill="#d44a40"/><circle cx="30" cy="28" r="9.5" fill="#f7f4ee"/></g></svg></div>
+    <div class="body"><div class="cols">
+      <div style="flex:1">
+        <div class="lean" style="font-size:36px;color:var(--leanD49)">D+49</div>
+        <div class="shift sec">D+6 since 2016</div>
+        <div class="bar" style="width:150px;margin-top:7px"><i class="d" style="width:74%"></i><i class="r" style="width:26%"></i></div>
+      </div>
+      <div class="grid2">
+        <div><div class="v">64%</div><div class="k sec">White</div></div><div><div class="v">$89k</div><div class="k sec">Income</div></div>
+        <div><div class="v">61%</div><div class="k sec">College</div></div><div><div class="v">38</div><div class="k sec">Median age</div></div>
+      </div>
+    </div></div>
+  </div><div class="cap">medium, light</div></div>
+
+  <div class="cell"><div class="w D light">
+    <div class="band"><div><div class="title">Precinct 615</div><div class="sub">Brooklyn, NY</div></div>
+    <svg class="pin" viewBox="0 0 60 72"><g stroke="#191512" stroke-width="3.4" stroke-linejoin="round"><path d="M30 5 C16 5 6 15 6 29 C6 45 30 67 30 67 C30 67 54 45 54 29 C54 15 44 5 30 5 Z" fill="#d44a40"/><circle cx="30" cy="28" r="9.5" fill="#f7f4ee"/></g></svg></div>
+    <div class="body">
+      <div class="lean" style="color:var(--leanR91)">R+91</div>
+      <div class="shift sec">R+4 since 2016</div>
+      <div class="bar"><i class="d" style="width:5%"></i><i class="r" style="width:95%"></i></div>
+      <div class="meta"><span class="race">90% White</span><span class="sub sec">$52k</span></div>
+    </div>
+  </div><div class="cap">red stress test</div></div>
+</div>
+
+<div class="reco"><b>My read:</b> C is the strongest total package. It keeps the map-paper identity you built, but the grid finally means something (it only exists inside the map band) and the text sits on clean paper, which was your exact complaint. B is the boldest and your real precinct shape makes every widget personal, but tall skinny precincts will render as a sliver some days. A is the safest refinement. D is handsome but reads more "banking app" than "map". Happy to mix too, for example C's split with B's bigger shape. Tell me a letter (or a mix) and I'll build it in SwiftUI, verify on the sim, and ship it to your phone.</div>
+</div></body>
+</html>
