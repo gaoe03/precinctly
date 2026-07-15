@@ -120,7 +120,12 @@ section{padding:94px 0;position:relative}
 .wcol{display:flex;flex-direction:column;align-items:center}
 .widget{position:relative;overflow:hidden;border-radius:22px;background:var(--paper);color:#15171C;box-shadow:0 1px 1px rgba(255,255,255,.45) inset, 0 10px 22px -10px rgba(20,24,32,.45);--paper:#EDEFEB;--wg:#D1D9CF;--wink:#293350;--wsec:#5B616B;--wchip:rgba(255,255,255,.62)}
 .widget>*{position:relative}
-.widget .g{position:absolute;inset:0;background-image:linear-gradient(var(--wg) 1px,transparent 1px),linear-gradient(90deg,var(--wg) 1px,transparent 1px);background-size:21px 21px;opacity:.55;pointer-events:none}
+.wrule{height:1px;background:var(--wg)}
+.w-home .wrule{margin:7px -14px}
+.w-med .wrule{margin:6px -16px}
+.wleanrow{display:flex;align-items:center;gap:8px}
+.wleanrow .wshift{margin-top:0}
+.wfoot{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-top:7px}
 .wpin{flex:0 0 auto}
 .wname{font-family:var(--serif);font-weight:600;font-size:13px;line-height:1.08;white-space:nowrap}
 .wsub{font-family:var(--sans);font-size:9.5px;color:var(--wsec);margin-top:1px;white-space:nowrap}
@@ -130,15 +135,15 @@ section{padding:94px 0;position:relative}
 .wchip{border-radius:8px;background:var(--wchip);border:1px solid color-mix(in srgb,var(--wink) 38%,transparent);display:flex;align-items:center;justify-content:center;flex:0 0 auto}
 .w-home{width:165px;height:165px;padding:14px;display:flex;flex-direction:column}
 .w-home .whead{display:flex;justify-content:space-between;align-items:flex-start;gap:6px}
-.w-home .wlean{font-size:33px;margin-top:auto}
-.w-home .wrace{font-family:var(--sans);font-size:10.5px;font-weight:600;margin-top:7px}
+.w-home .wlean{font-size:29px}
+.w-home .wrace{font-family:var(--sans);font-size:10.5px;font-weight:600}
 .w-med{width:348px;height:165px;padding:15px 16px;display:flex;gap:13px}
 .w-med .wleft{flex:1;display:flex;flex-direction:column;min-width:0}
 .w-med .whead{display:flex;align-items:flex-start;gap:7px}
-.w-med .wlean{font-size:31px;margin-top:auto}
+.w-med .wlean{font-size:31px}
 .w-med .wbar{width:134px}
-.w-med .wstats{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;align-content:center;flex:0 0 auto}
-.w-med .wstats .v{font-family:var(--serif);font-weight:660;font-size:15px;line-height:1;font-variant-numeric:tabular-nums}
+.w-med .wstats{display:grid;grid-template-columns:1fr 1fr;gap:4px 14px;align-content:center;flex:0 0 auto}
+.w-med .wstats .v{font-family:var(--serif);font-weight:660;font-size:13.5px;line-height:1;font-variant-numeric:tabular-nums}
 .w-med .wstats .k{font-family:var(--sans);font-size:9px;color:var(--wsec);margin-top:2px;white-space:nowrap}
 .wspec{font-family:var(--sans);font-size:15.5px;color:var(--muted);line-height:1.7;max-width:40ch}
 .wspec b{color:var(--ink);font-weight:600}
@@ -379,15 +384,15 @@ footer{padding:50px 0 44px;border-top:1px solid var(--hair)}
   <div class="wgrid2 rv">
     <div class="wcol"><div class="wscreen" id="wscreen">
       <div class="widget w-home">
-        <div class="g"></div>
         <div class="whead">
           <div><div class="wname">AD 75 ED 14</div><div class="wsub">Manhattan, NY</div></div>
-          <svg class="wpin" width="19" height="23" viewBox="0 0 60 72" aria-hidden="true"><g filter="url(#wobble)" stroke="#33291f" stroke-width="3.4" stroke-linejoin="round" stroke-linecap="round"><path d="M30 5 C16 5 6 15 6 29 C6 45 30 67 30 67 C30 67 54 45 54 29 C54 15 44 5 30 5 Z" fill="#d44a40"/><circle cx="30" cy="28" r="9.5" fill="#f7f4ee"/></g></svg>
+          <div class="wchip" style="width:34px;height:34px"><svg width="26" height="26" viewBox="0 0 100 100" aria-hidden="true"><polygon points="0.0,41.4 13.8,22.4 100.0,58.7 86.0,77.6 0.0,41.4" fill="rgba(55,94,219,.22)" stroke="var(--dem)" stroke-width="4" stroke-linejoin="round"/></svg></div>
         </div>
-        <div class="wlean">D+49</div>
-        <div class="wshift">D+6 since 2016</div>
-        <div class="wbar"><span style="background:var(--dem);width:74%"></span><span style="background:var(--rep);width:26%"></span></div>
-        <div class="wrace">64% White</div>
+        <div class="wrule"></div>
+        <div class="wleanrow"><span class="wlean">D+49</span><span class="wshift">D+6 since 2016</span></div>
+        <div class="wrule"></div>
+        <div class="wbar" style="margin-top:0"><span style="background:var(--dem);width:74%"></span><span style="background:var(--rep);width:26%"></span></div>
+        <div class="wfoot"><span class="wrace">64% White</span><span class="wsub">$89k income</span></div>
       </div>
       <div class="widget w-med" id="wmedLight"></div>
     </div></div>
@@ -557,18 +562,21 @@ footer{padding:50px 0 44px;border-top:1px solid var(--hair)}
 
   /* build widget medium */
   function wcell(v,k){ return '<div><div class="v">'+v+'</div><div class="k">'+k+'</div></div>'; }
-  function medHTML(){ return '<div class="g"></div>'+
-    '<div class="wleft">'+
+  function medHTML(){ return ''+
+    '<div style="display:flex;flex-direction:column;min-width:0;width:100%">'+
       '<div class="whead">'+
-        '<svg class="wpin" width="15" height="18" viewBox="0 0 60 72" aria-hidden="true"><g filter="url(#wobble)" stroke="#33291f" stroke-width="3.6" stroke-linejoin="round" stroke-linecap="round"><path d="M30 5 C16 5 6 15 6 29 C6 45 30 67 30 67 C30 67 54 45 54 29 C54 15 44 5 30 5 Z" fill="#d44a40"/><circle cx="30" cy="28" r="9.5" fill="#f7f4ee"/></g></svg>'+
         '<div style="min-width:0"><div class="wname">AD 75 ED 14</div><div class="wsub">Manhattan, NY</div></div>'+
-        '<div class="wchip" style="width:40px;height:40px;margin-left:auto"><svg width="30" height="30" viewBox="0 0 36 36" aria-hidden="true"><path d="M8 13 L19 7 L28 12 L30 24 L21 30 L10 27 Z" fill="rgba(33,102,230,.24)" stroke="var(--dem)" stroke-width="1.7" stroke-linejoin="round"/></svg></div>'+
+        '<div class="wchip" style="width:32px;height:32px;margin-left:auto"><svg width="24" height="24" viewBox="0 0 100 100" aria-hidden="true"><polygon points="0.0,41.4 13.8,22.4 100.0,58.7 86.0,77.6 0.0,41.4" fill="rgba(55,94,219,.22)" stroke="var(--dem)" stroke-width="4" stroke-linejoin="round"/></svg></div>'+
       '</div>'+
-      '<div class="wlean">D+49</div>'+
-      '<div class="wshift">D+6 since 2016</div>'+
-      '<div class="wbar"><span style="background:var(--dem);width:74%"></span><span style="background:var(--rep);width:26%"></span></div>'+
-    '</div>'+
-    '<div class="wstats">'+wcell('64%','White')+wcell('$89k','Income')+wcell('61%','College')+wcell('38','Median age')+wcell('82%','Renters')+wcell('5.1k','People')+'</div>'; }
+      '<div class="wrule"></div>'+
+      '<div style="display:flex;gap:13px;flex:1;min-width:0">'+
+        '<div class="wleft">'+
+          '<div class="wleanrow"><span class="wlean">D+49</span><span class="wshift">D+6 since 2016</span></div>'+
+          '<div class="wbar" style="margin-top:auto;width:134px"><span style="background:var(--dem);width:74%"></span><span style="background:var(--rep);width:26%"></span></div>'+
+        '</div>'+
+        '<div class="wstats">'+wcell('64%','White')+wcell('$89k','Income')+wcell('61%','College')+wcell('38','Median age')+wcell('82%','Renters')+wcell('5.1k','People')+'</div>'+
+      '</div>'+
+    '</div>'; }
   document.getElementById('wmedLight').innerHTML=medHTML();
 
   /* reveal */

@@ -108,8 +108,11 @@ struct PrecinctWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "PrecinctWidget", provider: PrecinctProvider()) { entry in
             PrecinctHomeView(entry: entry)
+                .padding(EdgeInsets(top: 14, leading: 15, bottom: 14, trailing: 15))
                 .containerBackground(WidgetColor.mapTone, for: .widget)
         }
+        // Margins are ours so the ledger rules can run edge to edge like a printed sheet.
+        .contentMarginsDisabled()
         .configurationDisplayName("Precinct")
         .description("The political lean and demographics of where you are.")
         .supportedFamilies([.systemSmall, .systemMedium])
@@ -131,77 +134,94 @@ struct PrecinctHomeView: View {
         }
     }
 
-    /// Faint street-map grid behind the content (the precinct shape lives in its own chip now).
-    private func backdrop() -> some View {
-        MapGrid().stroke(WidgetColor.gridLine, lineWidth: 1).opacity(0.6).padding(-6)
+    /// Ledger rule: a hairline that runs edge to edge (margins are disabled at the config
+    /// level, so the negative padding reaches the widget's true edges).
+    private func ledgerRule() -> some View {
+        Rectangle().fill(WidgetColor.rule).frame(height: 1).padding(.horizontal, -15)
     }
 
     /// Small framed "mini-map" of the precinct's own shape, lean-tinted.
-    private func precinctChip(_ rings: [[CLLocationCoordinate2D]], _ lean: Color) -> some View {
+    private func precinctChip(_ rings: [[CLLocationCoordinate2D]], _ lean: Color, size: CGFloat = 38) -> some View {
         ZStack {
             RoundedRectangle(cornerRadius: 7).fill(WidgetColor.chipFill)
             PrecinctOutline(rings: rings).fill(lean.opacity(0.22)).padding(5)
             PrecinctOutline(rings: rings).stroke(lean, lineWidth: 1.4).padding(5)
             RoundedRectangle(cornerRadius: 7).strokeBorder(WidgetColor.ink.opacity(0.4), lineWidth: 1)
         }
-        .frame(width: 38, height: 38)
+        .frame(width: size, height: size)
     }
 
+    // "Ledger and chip": the old free-floating map grid never lined up with the text, so the
+    // paper is ruled instead — hairlines exactly between the row groups — and the precinct's
+    // real shape sits in a framed chip beside the header.
     private func small(_ p: PrecinctProfile, _ e: PrecinctEntry) -> some View {
         let lean = WidgetColor.lean(p.leanDemShare)
-        return ZStack {
-            backdrop()
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(precinctTitle(p)).font(.caption2.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.7)
-                        Text("\(countyDisplay(p.borough)), \(p.state)").font(.caption2).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
-                    }
-                    Spacer(minLength: 2)
-                    Image("WidgetPin").resizable().scaledToFit().frame(width: 18, height: 22)
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(precinctTitle(p)).font(.caption2.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.7)
+                    Text("\(countyDisplay(p.borough)), \(p.state)").font(.system(size: 10)).foregroundStyle(.secondary)
+                        .lineLimit(2).minimumScaleFactor(0.8)
                 }
-                Spacer(minLength: 1)
-                Text(p.leanShort).font(.system(size: 30, weight: .heavy, design: .serif))
+                Spacer(minLength: 4)
+                if !e.rings.isEmpty { precinctChip(e.rings, lean, size: 34) }
+            }
+            ledgerRule().padding(.vertical, 7)
+            HStack(alignment: .center, spacing: 8) {
+                Text(p.leanShort).font(.system(size: 29, weight: .heavy, design: .serif))
                     .foregroundStyle(lean).lineLimit(1).minimumScaleFactor(0.6)
                 if let sh = subline(p, e) {
-                    Text(sh).font(.caption2).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
+                    Text(sh).font(.system(size: 10)).foregroundStyle(.secondary)
+                        .lineLimit(2).minimumScaleFactor(0.8)
                 }
-                if let s = p.leanDemShare { TwoPartyBarW(demShare: s).padding(.vertical, 3) }
-                if let top = p.raceBreakdown.first {
-                    Text("\(pctStr(top.value)) \(top.label)").font(.caption2.weight(.medium)).lineLimit(1).minimumScaleFactor(0.7)
-                }
-                // No income/turnout line: seven shrunken text rows crowded the small face, and
-                // its clamped turnout figure dodged the honesty gate the app enforces everywhere.
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            ledgerRule().padding(.vertical, 7)
+            if let s = p.leanDemShare { TwoPartyBarW(demShare: s) }
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                if let top = p.raceBreakdown.first {
+                    Text("\(pctStr(top.value)) \(top.label)").font(.caption2.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.7)
+                }
+                Spacer(minLength: 4)
+                if let inc = p.incomeMedian {
+                    Text("\(moneyShort(inc)) income").font(.system(size: 10)).foregroundStyle(.secondary)
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                }
+            }
+            .padding(.top, 6)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func medium(_ p: PrecinctProfile, _ e: PrecinctEntry) -> some View {
         let lean = WidgetColor.lean(p.leanDemShare)
-        return ZStack {
-            backdrop()
-            HStack(alignment: .top, spacing: 10) {
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 8) {
                 VStack(alignment: .leading, spacing: 1) {
-                    HStack(alignment: .top, spacing: 6) {
-                        Image("WidgetPin").resizable().scaledToFit().frame(width: 15, height: 18)
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text(precinctTitle(p)).font(.caption.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.7)
-                            Text("\(countyDisplay(p.borough)), \(p.state)").font(.caption2).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
+                    Text(precinctTitle(p)).font(.caption.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.7)
+                    Text("\(countyDisplay(p.borough)), \(p.state)").font(.caption2).foregroundStyle(.secondary)
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                }
+                Spacer(minLength: 4)
+                if !e.rings.isEmpty { precinctChip(e.rings, lean, size: 36) }
+            }
+            ledgerRule().padding(.vertical, 6)
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(alignment: .center, spacing: 8) {
+                        Text(p.leanShort).font(.system(size: 33, weight: .heavy, design: .serif))
+                            .foregroundStyle(lean).lineLimit(1).minimumScaleFactor(0.6)
+                        if let sh = subline(p, e) {
+                            Text(sh).font(.caption2).foregroundStyle(.secondary)
+                                .lineLimit(2).minimumScaleFactor(0.8)
                         }
-                        if !e.rings.isEmpty { Spacer(minLength: 4); precinctChip(e.rings, lean) }
                     }
                     Spacer(minLength: 2)
-                    Text(p.leanShort).font(.system(.title, design: .serif).weight(.heavy))
-                        .foregroundStyle(lean).lineLimit(1).minimumScaleFactor(0.6)
-                    if let sh = subline(p, e) {
-                        Text(sh).font(.caption2).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.8)
-                    }
-                    if let s = p.leanDemShare { TwoPartyBarW(demShare: s).frame(width: 130).padding(.top, 3) }
+                    if let s = p.leanDemShare { TwoPartyBarW(demShare: s).frame(width: 150) }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 statGrid(p)
             }
+            .frame(maxHeight: .infinity)
         }
     }
 
@@ -298,16 +318,6 @@ private struct PrecinctOutline: Shape {
             path.closeSubpath()
         }
         return path
-    }
-}
-
-/// Faint background grid evoking a street map.
-private struct MapGrid: Shape {
-    func path(in rect: CGRect) -> Path {
-        var p = Path()
-        for i in 1..<4 { let x = rect.width * CGFloat(i) / 4; p.move(to: CGPoint(x: x, y: 0)); p.addLine(to: CGPoint(x: x, y: rect.height)) }
-        for i in 1..<3 { let y = rect.height * CGFloat(i) / 3; p.move(to: CGPoint(x: 0, y: y)); p.addLine(to: CGPoint(x: rect.width, y: y)) }
-        return p
     }
 }
 
@@ -415,7 +425,7 @@ private enum WidgetColor {
         })
     }
     static let mapTone  = dynamic((0.93, 0.94, 0.92), (0.11, 0.12, 0.14))   // street-map paper: light ↔ dark slate
-    static let gridLine = dynamic((0.82, 0.85, 0.81), (0.28, 0.31, 0.36))
+    static let rule     = dynamic((0.80, 0.83, 0.78), (0.27, 0.31, 0.35))   // ledger hairlines between row groups
     static let ink      = dynamic((0.16, 0.20, 0.30), (0.82, 0.85, 0.92))   // bar/chip outline: dark ↔ light
     /// Mini-map chip fill: a faint lighter panel over the paper in either mode.
     static let chipFill = Color(UIColor { tc in

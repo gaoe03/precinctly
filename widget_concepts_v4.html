@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Precinct widget concepts v4 (full data)</title>
+<style>
+:root{
+  --paperL:#EDF0EB; --paperD:#1C1F24;
+  --gridL:#DDE3DA;  --gridD:#39414D;
+  --ruleL:#CBD3C7;  --ruleD:#454E5A;
+  --inkL:#29334D;   --inkD:#D1D9EB;
+  --dem:#375EDB; --rep:#C92D44;
+  --sf:#385EDA; --corona:#943DA4; --coronaD:#B36BC2; --bp:#D22B35;
+  --serif:ui-serif,"New York",Georgia,serif;
+  --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;
+}
+body{margin:0;background:#F4F6F8;color:#15171C;font-family:var(--sans);padding:40px 24px 80px}
+.wrap{max-width:1120px;margin:0 auto}
+h1{font-family:var(--serif);font-size:34px;letter-spacing:-.02em;margin:0 0 6px}
+.dek{color:#5B616B;max-width:78ch;margin:0 0 8px}
+h2{font-family:var(--serif);font-size:22px;margin:44px 0 2px}
+.note{color:#5B616B;font-size:14px;max-width:80ch;margin:0 0 16px}
+.row{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start}
+.cap{font-size:11.5px;color:#8A909B;margin-top:6px;text-align:center}
+.cell{display:flex;flex-direction:column;align-items:center}
+.reco{background:#fff;border:1px solid rgba(20,24,32,.12);border-radius:12px;padding:14px 18px;margin-top:36px;font-size:14px;color:#5B616B;max-width:80ch}
+.reco b{color:#15171C}
+
+.w{width:176px;height:176px;border-radius:38px;position:relative;overflow:hidden;
+   box-shadow:0 4px 14px rgba(20,24,32,.14);flex:0 0 auto;box-sizing:border-box;padding:14px 15px}
+.w.med{width:380px}
+.w.light{background:var(--paperL);color:var(--inkL)}
+.w.dark{background:var(--paperD);color:var(--inkD)}
+.w .sec{opacity:.6}
+.title{font-size:11px;font-weight:650;line-height:1.2}
+.sub{font-size:9.5px}
+.lean{font-family:var(--serif);font-weight:800;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+.shift{font-size:9.5px;font-weight:500}
+.foot{font-size:9.5px;font-weight:600}
+.bar{height:8px;border-radius:4px;overflow:hidden;display:flex}
+.bar i{display:block;height:100%}
+.bar .d{background:var(--dem)} .bar .r{background:var(--rep)}
+.w.light .bar{outline:1.2px solid rgba(41,51,77,.5);outline-offset:-1.2px}
+.w.dark  .bar{outline:1.2px solid rgba(209,217,235,.45);outline-offset:-1.2px}
+svg.pin{width:15px;height:19px;flex:0 0 auto}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;align-content:center;min-width:106px}
+.grid2 .v{font-family:var(--serif);font-weight:660;font-size:13.5px;line-height:1;font-variant-numeric:tabular-nums}
+.grid2 .k{font-size:9px;margin-top:2px}
+.gridbg-l{background:
+  linear-gradient(var(--gridL) 1px,transparent 1px) 0 0/22px 22px,
+  linear-gradient(90deg,var(--gridL) 1px,transparent 1px) 0 0/22px 22px,var(--paperL)}
+.gridbg-d{background:
+  linear-gradient(var(--gridD) 1px,transparent 1px) 0 0/22px 22px,
+  linear-gradient(90deg,var(--gridD) 1px,transparent 1px) 0 0/22px 22px,var(--paperD)}
+
+/* ---- current (reference) ---- */
+.cur .mapgrid{position:absolute;inset:-6px;pointer-events:none}
+.cur .head{display:flex;justify-content:space-between;align-items:flex-start;position:relative}
+.cur .lean{font-size:30px;line-height:1.1;position:relative}
+.cur .rel{position:relative}
+
+/* ---- D1 ledger + chip ---- */
+.d1 .hr{height:1px;margin:6px -15px}
+.d1.light .hr{background:var(--ruleL)}
+.d1.dark  .hr{background:var(--ruleD)}
+.d1 .head{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+.d1 .chip{width:34px;height:34px;border-radius:8px;position:relative;flex:0 0 auto}
+.d1.light .chip{background:rgba(255,255,255,.6);box-shadow:inset 0 0 0 1px rgba(41,51,77,.35)}
+.d1.dark  .chip{background:rgba(255,255,255,.10);box-shadow:inset 0 0 0 1px rgba(209,217,235,.35)}
+.d1 .chip svg{position:absolute;inset:4px}
+.d1 .lean{font-size:29px;line-height:1.02}
+.d1 .leanrow{display:flex;align-items:baseline;gap:8px}
+.d1 .foot2{display:flex;justify-content:space-between;align-items:baseline;margin-top:5px;gap:8px}
+
+/* ---- D2 corner stamp ---- */
+.d2{padding:0}
+.d2 .top{display:flex}
+.d2 .id{flex:1;padding:13px 0 0 15px}
+.d2 .stamp{width:66px;height:58px;position:relative;flex:0 0 auto;border-radius:0 0 0 10px;overflow:hidden}
+.d2.light .stamp{box-shadow:inset 1.4px -1.4px 0 var(--ruleL)}
+.d2.dark  .stamp{box-shadow:inset 1.4px -1.4px 0 var(--ruleD)}
+.d2 .stamp svg.shape{position:absolute;inset:7px}
+.d2 .body{padding:6px 15px 13px}
+.d2 .lean{font-size:29px;line-height:1.05}
+.d2 .foot2{display:flex;justify-content:space-between;align-items:baseline;margin-top:5px;gap:8px}
+.d2 svg.pin{position:absolute;right:8px;bottom:6px;width:13px;height:16px}
+
+/* ---- D3 ruled paper ---- */
+.d3{padding:0}
+.d3 .paper{position:absolute;inset:0}
+.d3 .rule{position:absolute;left:0;right:0;height:1px}
+.d3.light .rule{background:var(--ruleL)}
+.d3.dark  .rule{background:var(--ruleD)}
+.d3 .rule i{position:absolute;width:1.2px;height:4px;top:-1.5px}
+.d3.light .rule i{background:var(--ruleL)}
+.d3.dark  .rule i{background:var(--ruleD)}
+.d3 .content{position:relative;padding:0 15px;height:100%;box-sizing:border-box}
+.d3 .rrow{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.d3 .lean{font-size:31px;line-height:1}
+.d3 .chip{width:30px;height:30px;position:relative;flex:0 0 auto}
+.d3 .chip svg{position:absolute;inset:0}
+</style>
+</head>
+<body><div class="wrap">
+<h1>Widget concepts v4, nothing removed</h1>
+<p class="dek">Every option below carries the complete current payload: precinct, county and state, pin, lean, shift, two-party bar, top race, and income, plus the real precinct shape on top of that. The shipping widget is first for comparison. Shapes and numbers are the real database values (SF 7602, Corona 1322, Borough Park 615).</p>
+
+<h2>Current shipping widget, for reference</h2>
+<div class="row">
+  <div class="cell"><div class="w cur light">
+    <svg class="mapgrid" viewBox="0 0 188 188" preserveAspectRatio="none"><g stroke="#DDE3DA" stroke-width="1"><line x1="47" y1="0" x2="47" y2="188"/><line x1="94" y1="0" x2="94" y2="188"/><line x1="141" y1="0" x2="141" y2="188"/><line x1="0" y1="63" x2="188" y2="63"/><line x1="0" y1="126" x2="188" y2="126"/></g></svg>
+    <div class="head"><div><div class="title">Precinct 7602</div><div class="sub sec">San Francisco County, CA</div></div>
+    <svg class="pin" viewBox="0 0 60 72"><g stroke="#33291f" stroke-width="3.4" stroke-linejoin="round"><path d="M30 5 C16 5 6 15 6 29 C6 45 30 67 30 67 C30 67 54 45 54 29 C54 15 44 5 30 5 Z" fill="#d44a40"/><circle cx="30" cy="28" r="9.5" fill="#f7f4ee"/></g></svg></div>
+    <div class="lean" style="color:var(--sf);margin-top:14px">D+78</div>
+    <div class="shift sec rel">R+3 since 2020</div>
+    <div class="bar rel" style="margin:5px 0"><i class="d" style="width:89%"></i><i class="r" style="width:11%"></i></div>
+    <div class="foot rel">39% White</div>
+  </div><div class="cap">grid lines land anywhere; no shape; income row was cut in the lag fix</div></div>
+</div>
+
+<h2>D1. Ledger and chip</h2>
+<p class="note">Same rows as today plus the income cell restored and the shape in a framed chip beside the header. The grid becomes three hairlines that sit exactly between the row groups. The quietest option; nothing moves, it just aligns.</p>
+<div class="row">
+  <div class="cell"><div class="w d1 light">
+    <div class="head"><div><div class="title">Precinct 7602</div><div class="sub sec">San Francisco County, CA</div></div>
+      <div class="chip"><svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"><polygon points="31.5,89.4 16.9,81.7 16.6,78.2 7.7,68.9 2.7,59.3 0.0,58.6 13.8,49.3 47.3,21.6 55.4,16.7 71.6,1.7 95.2,79.9 100.0,87.1 99.6,89.9 87.8,93.3 76.7,96.5 45.9,98.3 31.5,89.4" fill="rgba(56,94,218,.22)" stroke="#385EDA" stroke-width="4" stroke-linejoin="round"/></svg></div></div>
+    <div class="hr"></div>
+    <div class="leanrow"><span class="lean" style="color:var(--sf)">D+78</span><span class="shift sec">R+3 since 2020</span></div>
+    <div class="hr"></div>
+    <div class="bar"><i class="d" style="width:89%"></i><i class="r" style="width:11%"></i></div>
+    <div class="foot2"><span class="foot">39% White</span><span class="sub sec">$134k income</span></div>
+  </div><div class="cap">small light, SF 7602</div></div>
+
+  <div class="cell"><div class="w d1 dark">
+    <div class="head"><div><div class="title">Precinct 1322</div><div class="sub sec">Queens, NY</div></div>
+      <div class="chip"><svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"><polygon points="0.0,52.7 85.4,27.3 100.0,55.9 45.3,72.7 30.9,69.3 7.7,67.5 0.0,52.7" fill="rgba(179,107,194,.22)" stroke="#B36BC2" stroke-width="4" stroke-linejoin="round"/></svg></div></div>
+    <div class="hr"></div>
+    <div class="leanrow"><span class="lean" style="color:var(--coronaD)">R+10</span><span class="shift sec">R+67 since 2008</span></div>
+    <div class="hr"></div>
+    <div class="bar"><i class="d" style="width:45%"></i><i class="r" style="width:55%"></i></div>
+    <div class="foot2"><span class="foot">81% Hispanic</span><span class="sub sec">$38k income</span></div>
+  </div><div class="cap">small dark, Corona 1322</div></div>
+
+  <div class="cell"><div class="w d1 med light">
+    <div style="display:flex;gap:14px;height:100%">
+      <div style="flex:1;display:flex;flex-direction:column">
+        <div class="head"><div><div class="title">Precinct 7602</div><div class="sub sec">San Francisco County, CA</div></div></div>
+        <div class="hr" style="margin-right:-8px"></div>
+        <div class="leanrow"><span class="lean" style="font-size:33px;color:var(--sf)">D+78</span><span class="shift sec">R+3 since 2020</span></div>
+        <div class="bar" style="width:150px;margin-top:7px"><i class="d" style="width:89%"></i><i class="r" style="width:11%"></i></div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+        <div class="chip" style="width:40px;height:40px"><svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" style="position:absolute;inset:5px"><polygon points="31.5,89.4 16.9,81.7 16.6,78.2 7.7,68.9 2.7,59.3 0.0,58.6 13.8,49.3 47.3,21.6 55.4,16.7 71.6,1.7 95.2,79.9 100.0,87.1 99.6,89.9 87.8,93.3 76.7,96.5 45.9,98.3 31.5,89.4" fill="rgba(56,94,218,.22)" stroke="#385EDA" stroke-width="4" stroke-linejoin="round"/></svg></div>
+        <div class="grid2">
+          <div><div class="v">39%</div><div class="k sec">White</div></div><div><div class="v">$134k</div><div class="k sec">Income</div></div>
+          <div><div class="v">65%</div><div class="k sec">College</div></div><div><div class="v">36</div><div class="k sec">Median age</div></div>
+        </div>
+      </div>
+    </div>
+  </div><div class="cap">medium light, SF 7602</div></div>
+
+  <div class="cell"><div class="w d1 light">
+    <div class="head"><div><div class="title">Precinct 615</div><div class="sub sec">Brooklyn, NY</div></div>
+      <div class="chip"><svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"><polygon points="0.0,64.6 57.1,9.6 100.0,35.5 42.9,90.4 0.0,64.6" fill="rgba(210,43,53,.16)" stroke="#D22B35" stroke-width="4" stroke-linejoin="round"/></svg></div></div>
+    <div class="hr"></div>
+    <div class="leanrow"><span class="lean" style="color:var(--bp)">R+91</span><span class="shift sec">R+3 since 2020</span></div>
+    <div class="hr"></div>
+    <div class="bar"><i class="d" style="width:5%"></i><i class="r" style="width:95%"></i></div>
+    <div class="foot2"><span class="foot">84% White</span><span class="sub sec">$54k income</span></div>
+  </div><div class="cap">red test, Borough Park 615</div></div>
+</div>
+
+<h2>D2. Corner stamp</h2>
+<p class="note">All the same rows, but the shape lives in a bounded map corner, top-right, with its own graticule and the pin tucked into it, like a specimen stamp on a survey sheet. The grid exists only inside the stamp, so the text never shares space with it.</p>
+<div class="row">
+  <div class="cell"><div class="w d2 light">
+    <div class="top">
+      <div class="id"><div class="title">Precinct 7602</div><div class="sub sec">San Francisco County, CA</div></div>
+      <div class="stamp gridbg-l"><svg class="shape" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"><polygon points="31.5,89.4 16.9,81.7 16.6,78.2 7.7,68.9 2.7,59.3 0.0,58.6 13.8,49.3 47.3,21.6 55.4,16.7 71.6,1.7 95.2,79.9 100.0,87.1 99.6,89.9 87.8,93.3 76.7,96.5 45.9,98.3 31.5,89.4" fill="rgba(56,94,218,.22)" stroke="#385EDA" stroke-width="3.4" stroke-linejoin="round"/></svg>
+      <svg class="pin" viewBox="0 0 60 72"><g stroke="#33291f" stroke-width="3.4" stroke-linejoin="round"><path d="M30 5 C16 5 6 15 6 29 C6 45 30 67 30 67 C30 67 54 45 54 29 C54 15 44 5 30 5 Z" fill="#d44a40"/><circle cx="30" cy="28" r="9.5" fill="#f7f4ee"/></g></svg></div>
+    </div>
+    <div class="body">
+      <div class="leanrow" style="display:flex;align-items:baseline;gap:8px"><span class="lean" style="color:var(--sf)">D+78</span><span class="shift sec">R+3 since 2020</span></div>
+      <div class="bar" style="margin-top:5px"><i class="d" style="width:89%"></i><i class="r" style="width:11%"></i></div>
+      <div class="foot2"><span class="foot">39% White</span><span class="sub sec">$134k income</span></div>
+    </div>
+  </div><div class="cap">small light, SF 7602</div></div>
+
+  <div class="cell"><div class="w d2 dark">
+    <div class="top">
+      <div class="id"><div class="title">Precinct 1322</div><div class="sub sec">Queens, NY</div></div>
+      <div class="stamp gridbg-d"><svg class="shape" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"><polygon points="0.0,52.7 85.4,27.3 100.0,55.9 45.3,72.7 30.9,69.3 7.7,67.5 0.0,52.7" fill="rgba(179,107,194,.22)" stroke="#B36BC2" stroke-width="3.4" stroke-linejoin="round"/></svg>
+      <svg class="pin" viewBox="0 0 60 72"><g stroke="#191512" stroke-width="3.4" stroke-linejoin="round"><path d="M30 5 C16 5 6 15 6 29 C6 45 30 67 30 67 C30 67 54 45 54 29 C54 15 44 5 30 5 Z" fill="#d44a40"/><circle cx="30" cy="28" r="9.5" fill="#f7f4ee"/></g></svg></div>
+    </div>
+    <div class="body">
+      <div style="display:flex;align-items:baseline;gap:8px"><span class="lean" style="color:var(--coronaD)">R+10</span><span class="shift sec">R+67 since 2008</span></div>
+      <div class="bar" style="margin-top:5px"><i class="d" style="width:45%"></i><i class="r" style="width:55%"></i></div>
+      <div class="foot2"><span class="foot">81% Hispanic</span><span class="sub sec">$38k income</span></div>
+    </div>
+  </div><div class="cap">small dark, Corona 1322</div></div>
+
+  <div class="cell"><div class="w d2 med light">
+    <div class="top">
+      <div class="id">
+        <div class="title">Precinct 7602</div><div class="sub sec">San Francisco County, CA</div>
+        <div style="display:flex;align-items:baseline;gap:8px;margin-top:8px"><span class="lean" style="font-size:33px;color:var(--sf)">D+78</span><span class="shift sec">R+3 since 2020</span></div>
+        <div class="bar" style="width:150px;margin-top:6px"><i class="d" style="width:89%"></i><i class="r" style="width:11%"></i></div>
+      </div>
+      <div class="grid2" style="padding:13px 4px 0 0">
+        <div><div class="v">39%</div><div class="k sec">White</div></div><div><div class="v">$134k</div><div class="k sec">Income</div></div>
+        <div><div class="v">65%</div><div class="k sec">College</div></div><div><div class="v">36</div><div class="k sec">Median age</div></div>
+        <div><div class="v">65%</div><div class="k sec">Renters</div></div><div><div class="v">1.6k</div><div class="k sec">People</div></div>
+      </div>
+      <div class="stamp gridbg-l" style="height:74px;width:84px"><svg class="shape" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"><polygon points="31.5,89.4 16.9,81.7 16.6,78.2 7.7,68.9 2.7,59.3 0.0,58.6 13.8,49.3 47.3,21.6 55.4,16.7 71.6,1.7 95.2,79.9 100.0,87.1 99.6,89.9 87.8,93.3 76.7,96.5 45.9,98.3 31.5,89.4" fill="rgba(56,94,218,.22)" stroke="#385EDA" stroke-width="3.4" stroke-linejoin="round"/></svg>
+      <svg class="pin" viewBox="0 0 60 72"><g stroke="#33291f" stroke-width="3.4" stroke-linejoin="round"><path d="M30 5 C16 5 6 15 6 29 C6 45 30 67 30 67 C30 67 54 45 54 29 C54 15 44 5 30 5 Z" fill="#d44a40"/><circle cx="30" cy="28" r="9.5" fill="#f7f4ee"/></g></svg></div>
+    </div>
+  </div><div class="cap">medium light, SF 7602</div></div>
+
+  <div class="cell"><div class="w d2 light">
+    <div class="top">
+      <div class="id"><div class="title">Precinct 615</div><div class="sub sec">Brooklyn, NY</div></div>
+      <div class="stamp gridbg-l"><svg class="shape" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"><polygon points="0.0,64.6 57.1,9.6 100.0,35.5 42.9,90.4 0.0,64.6" fill="rgba(210,43,53,.16)" stroke="#D22B35" stroke-width="3.4" stroke-linejoin="round"/></svg>
+      <svg class="pin" viewBox="0 0 60 72"><g stroke="#33291f" stroke-width="3.4" stroke-linejoin="round"><path d="M30 5 C16 5 6 15 6 29 C6 45 30 67 30 67 C30 67 54 45 54 29 C54 15 44 5 30 5 Z" fill="#d44a40"/><circle cx="30" cy="28" r="9.5" fill="#f7f4ee"/></g></svg></div>
+    </div>
+    <div class="body">
+      <div style="display:flex;align-items:baseline;gap:8px"><span class="lean" style="color:var(--bp)">R+91</span><span class="shift sec">R+3 since 2020</span></div>
+      <div class="bar" style="margin-top:5px"><i class="d" style="width:5%"></i><i class="r" style="width:95%"></i></div>
+      <div class="foot2"><span class="foot">84% White</span><span class="sub sec">$54k income</span></div>
+    </div>
+  </div><div class="cap">red test, Borough Park 615</div></div>
+</div>
+
+<h2>D3. Ruled paper</h2>
+<p class="note">The full-bleed grid survives, but horizontal only, and the rows sit exactly inside the rules like entries on ledger paper, with tiny survey ticks on each rule. The lines can't misalign with the text because the lines define the rows. Shape chip inline with the header.</p>
+<div class="row">
+  <div class="cell"><div class="w d3 light">
+    <div class="paper"><div class="rule" style="top:50px"><i style="left:24px"></i><i style="left:88px"></i><i style="left:152px"></i></div><div class="rule" style="top:104px"><i style="left:24px"></i><i style="left:88px"></i><i style="left:152px"></i></div><div class="rule" style="top:130px"><i style="left:24px"></i><i style="left:88px"></i><i style="left:152px"></i></div></div>
+    <div class="content">
+      <div class="rrow" style="height:50px"><div><div class="title">Precinct 7602</div><div class="sub sec">San Francisco County, CA</div></div>
+        <div class="chip"><svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"><polygon points="31.5,89.4 16.9,81.7 16.6,78.2 7.7,68.9 2.7,59.3 0.0,58.6 13.8,49.3 47.3,21.6 55.4,16.7 71.6,1.7 95.2,79.9 100.0,87.1 99.6,89.9 87.8,93.3 76.7,96.5 45.9,98.3 31.5,89.4" fill="rgba(56,94,218,.22)" stroke="#385EDA" stroke-width="4" stroke-linejoin="round"/></svg></div></div>
+      <div class="rrow" style="height:54px"><span class="lean" style="color:var(--sf)">D+78</span><span class="shift sec">R+3 since 2020</span></div>
+      <div class="rrow" style="height:26px"><div class="bar" style="flex:1"><i class="d" style="width:89%"></i><i class="r" style="width:11%"></i></div></div>
+      <div class="rrow" style="height:36px"><span class="foot">39% White</span><span class="sub sec">$134k income</span></div>
+    </div>
+  </div><div class="cap">small light, SF 7602</div></div>
+
+  <div class="cell"><div class="w d3 dark">
+    <div class="paper"><div class="rule" style="top:50px"><i style="left:24px"></i><i style="left:88px"></i><i style="left:152px"></i></div><div class="rule" style="top:104px"><i style="left:24px"></i><i style="left:88px"></i><i style="left:152px"></i></div><div class="rule" style="top:130px"><i style="left:24px"></i><i style="left:88px"></i><i style="left:152px"></i></div></div>
+    <div class="content">
+      <div class="rrow" style="height:50px"><div><div class="title">Precinct 1322</div><div class="sub sec">Queens, NY</div></div>
+        <div class="chip"><svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"><polygon points="0.0,52.7 85.4,27.3 100.0,55.9 45.3,72.7 30.9,69.3 7.7,67.5 0.0,52.7" fill="rgba(179,107,194,.22)" stroke="#B36BC2" stroke-width="4" stroke-linejoin="round"/></svg></div></div>
+      <div class="rrow" style="height:54px"><span class="lean" style="color:var(--coronaD)">R+10</span><span class="shift sec">R+67 since 2008</span></div>
+      <div class="rrow" style="height:26px"><div class="bar" style="flex:1"><i class="d" style="width:45%"></i><i class="r" style="width:55%"></i></div></div>
+      <div class="rrow" style="height:36px"><span class="foot">81% Hispanic</span><span class="sub sec">$38k income</span></div>
+    </div>
+  </div><div class="cap">small dark, Corona 1322</div></div>
+
+  <div class="cell"><div class="w d3 med light">
+    <div class="paper"><div class="rule" style="top:50px"><i style="left:30px"></i><i style="left:120px"></i><i style="left:210px"></i><i style="left:300px"></i></div><div class="rule" style="top:104px"><i style="left:30px"></i><i style="left:120px"></i><i style="left:210px"></i><i style="left:300px"></i></div><div class="rule" style="top:130px"><i style="left:30px"></i><i style="left:120px"></i><i style="left:210px"></i><i style="left:300px"></i></div></div>
+    <div class="content">
+      <div style="display:flex;gap:16px">
+        <div style="flex:1">
+          <div class="rrow" style="height:50px"><div><div class="title">Precinct 7602</div><div class="sub sec">San Francisco County, CA</div></div></div>
+          <div class="rrow" style="height:54px"><span class="lean" style="color:var(--sf)">D+78</span><span class="shift sec">R+3 since 2020</span></div>
+          <div class="rrow" style="height:26px"><div class="bar" style="flex:1"><i class="d" style="width:89%"></i><i class="r" style="width:11%"></i></div></div>
+          <div class="rrow" style="height:36px"><span class="foot">39% White</span><span class="sub sec">$134k income</span></div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;padding-top:8px;gap:8px">
+          <div class="chip" style="width:36px;height:36px"><svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"><polygon points="31.5,89.4 16.9,81.7 16.6,78.2 7.7,68.9 2.7,59.3 0.0,58.6 13.8,49.3 47.3,21.6 55.4,16.7 71.6,1.7 95.2,79.9 100.0,87.1 99.6,89.9 87.8,93.3 76.7,96.5 45.9,98.3 31.5,89.4" fill="rgba(56,94,218,.22)" stroke="#385EDA" stroke-width="4" stroke-linejoin="round"/></svg></div>
+          <div class="grid2" style="min-width:112px">
+            <div><div class="v">65%</div><div class="k sec">College</div></div><div><div class="v">36</div><div class="k sec">Median age</div></div>
+            <div><div class="v">65%</div><div class="k sec">Renters</div></div><div><div class="v">1.6k</div><div class="k sec">People</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div><div class="cap">medium light, SF 7602</div></div>
+
+  <div class="cell"><div class="w d3 light">
+    <div class="paper"><div class="rule" style="top:50px"><i style="left:24px"></i><i style="left:88px"></i><i style="left:152px"></i></div><div class="rule" style="top:104px"><i style="left:24px"></i><i style="left:88px"></i><i style="left:152px"></i></div><div class="rule" style="top:130px"><i style="left:24px"></i><i style="left:88px"></i><i style="left:152px"></i></div></div>
+    <div class="content">
+      <div class="rrow" style="height:50px"><div><div class="title">Precinct 615</div><div class="sub sec">Brooklyn, NY</div></div>
+        <div class="chip"><svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"><polygon points="0.0,64.6 57.1,9.6 100.0,35.5 42.9,90.4 0.0,64.6" fill="rgba(210,43,53,.16)" stroke="#D22B35" stroke-width="4" stroke-linejoin="round"/></svg></div></div>
+      <div class="rrow" style="height:54px"><span class="lean" style="color:var(--bp)">R+91</span><span class="shift sec">R+3 since 2020</span></div>
+      <div class="rrow" style="height:26px"><div class="bar" style="flex:1"><i class="d" style="width:5%"></i><i class="r" style="width:95%"></i></div></div>
+      <div class="rrow" style="height:36px"><span class="foot">84% White</span><span class="sub sec">$54k income</span></div>
+    </div>
+  </div><div class="cap">red test, Borough Park 615</div></div>
+</div>
+
+<div class="reco"><b>My read:</b> all three carry every field the widget has ever shown, plus the shape and the restored income cell. D2 (corner stamp) is my pick: the map lives in its own bounded corner with the pin tucked in, the shape reads instantly, and the text column is completely clean, it looks like a stamped survey sheet rather than a template. D3 keeps the full-bleed paper romance with zero alignment risk because the rules define the rows. D1 is the minimum-change option. Say the word and the winner goes to SwiftUI and your phone.</div>
+</div></body>
+</html>
