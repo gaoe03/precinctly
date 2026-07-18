@@ -38,3 +38,7 @@ LAUNCH_READINESS.md
 UI_UX_AUDIT.md
 site/index-v*.html
 site/type-test.html
+
+# local working docs and archived one-off scripts (this machine only)
+notes/
+appstore-screenshots/
