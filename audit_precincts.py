@@ -15,7 +15,7 @@ US = dict(min_lon=-125.0, max_lon=-66.0, min_lat=24.0, max_lat=50.0)
 state = sys.argv[1] if len(sys.argv) > 1 else "CA"
 spec = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2] else None
 
-con = sqlite3.connect(DB)
+con = sqlite3.connect(f"file:{DB}?mode=ro&immutable=1", uri=True)
 counties = None
 if spec and "/" in spec:
     # "i/n" -> chunk i of n, counties round-robin by precinct count (balances big+small)

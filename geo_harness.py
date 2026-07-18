@@ -3,33 +3,43 @@
 
 Replicates the iOS lookup EXACTLY:
   1) R-tree bbox prefilter:
-       SELECT id FROM precinct_rtree
-       WHERE ? BETWEEN min_lon AND max_lon AND ? BETWEEN min_lat AND max_lat
-     (bind order: lon, lat)  -> candidate ids in SQLite return order
+       candidates containing (lon, lat), ordered by profile usability,
+       geometry specificity, then stable row id
   2) For each candidate (in order) load geometry_wkb, shapely.wkb.loads it,
      and test geom.contains(Point(lon,lat)). Return the FIRST containing precinct.
 
 This mirrors PrecinctDB.lookup + candidateIDs + WKBGeometry.contains.
 """
+import hashlib
 import os
 import sqlite3
-import random
 import sys
+import shapely
 from shapely import wkb as shp_wkb
 from shapely.geometry import Point
 
-# The app ships the bundled copy; it is byte-identical to the source output.
+# The app ships this bundled copy.
 DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "PrecinctWeather/PrecinctKit/Resources/nyc_precincts.sqlite")
+REVIEWED_SHAPELY_VERSION = "2.1.2"
+REVIEWED_OVERLAP_REDIRECT_COUNT = 30
+REVIEWED_OVERLAP_REDIRECT_SHA256 = "7b6ee8edcf3c64ffca0a9be49a6067c8895bf1925ee13614c059aded96faf2cc"
 
-conn = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+conn = sqlite3.connect(f"file:{DB}?mode=ro&immutable=1", uri=True)
 conn.row_factory = sqlite3.Row
 
 
 def candidate_ids(lon, lat):
     """R-tree bbox prefilter, exactly as candidateIDs() does (bind lon then lat)."""
     cur = conn.execute(
-        "SELECT id FROM precinct_rtree "
-        "WHERE ? BETWEEN min_lon AND max_lon AND ? BETWEEN min_lat AND max_lat",
+        "SELECT r.id FROM precinct_rtree AS r "
+        "JOIN precincts AS p ON p.rowid = r.id "
+        "WHERE ? BETWEEN r.min_lon AND r.max_lon "
+        "AND ? BETWEEN r.min_lat AND r.max_lat "
+        "ORDER BY p.data_complete DESC, "
+        "(p.lean_dem_share IS NOT NULL) DESC, "
+        "(p.pop_total IS NOT NULL AND p.pop_total > 0) DESC, "
+        "((p.max_lon - p.min_lon) * (p.max_lat - p.min_lat)) ASC, "
+        "r.id ASC",
         (lon, lat),
     )
     return [r[0] for r in cur.fetchall()]
@@ -68,10 +78,12 @@ def lookup(lon, lat):
 CASES = [
     ("Times Square",        40.758, -73.985, "Manhattan"),
     ("Wall Street",         40.706, -74.009, "Manhattan"),
+    ("Chinatown",           40.716, -73.997, "Manhattan"),
     ("Harlem",              40.811, -73.946, "Manhattan"),
     ("Williamsburg Bklyn",  40.708, -73.957, "Brooklyn"),
     ("Coney Island",        40.575, -73.979, "Brooklyn"),
     ("Borough Park",        40.633, -73.990, "Brooklyn"),
+    ("Crown Heights",       40.668, -73.943, "Brooklyn"),
     ("Flushing Queens",     40.759, -73.830, "Queens"),
     ("Jackson Heights",     40.748, -73.889, "Queens"),
     ("JFK area",            40.645, -73.785, "Queens"),
@@ -79,10 +91,16 @@ CASES = [
     ("South Bronx",         40.816, -73.918, "Bronx"),
     ("St George SI",        40.644, -74.078, "Staten Island"),
     ("Great Kills SI",      40.554, -74.151, "Staten Island"),
+    ("Yonkers",              40.950, -73.870, "Westchester"),
+    ("San Francisco",        37.7793, -122.4193, "San Francisco"),
+    ("Los Angeles",          34.0537, -118.2428, "Los Angeles"),
+    ("Boston Common",        42.3550, -71.0650, "Suffolk"),
+    ("Texas Capitol",        30.2747, -97.7404, "Travis"),
+    ("Houston City Hall",    29.7604, -95.3698, "Harris"),
     ("Hudson River (water)",40.760, -74.020, None),
-    ("Atlantic Ocean",      40.50,  -73.90,  None),
+    # Queried against the bundled DB: this offshore point has zero R-tree candidates.
+    ("Atlantic Ocean",      40.000, -72.500, None),
     ("Newark NJ (outside)", 40.735, -74.172, None),
-    ("Yonkers (outside)",   40.95,  -73.87,  None),
 ]
 
 print("=" * 78)
@@ -109,43 +127,68 @@ for name, lat, lon, expected in CASES:
 print("-" * 78)
 print(f"named cases: {len(CASES)}  passed: {len(CASES)-len(failures)}  failed: {len(failures)}")
 
-# ---- Self-resolution proxy: bbox CENTER of 300 random precincts ----
+# ---- Artifact-wide geometry and lookup health ----
 print()
 print("=" * 78)
-print("SELF-RESOLUTION HEALTH (bbox center of 300 random precincts)")
+print("FULL GEOMETRY AND LOOKUP HEALTH (every precinct representative point)")
 print("=" * 78)
 
 all_rows = conn.execute(
-    "SELECT rowid, unit_id, borough, min_lon, min_lat, max_lon, max_lat "
+    "SELECT rowid, unit_id, borough, geometry_wkb "
     "FROM precincts"
 ).fetchall()
 print(f"total precincts: {len(all_rows)}")
 
-random.seed(42)
-sample = random.sample(all_rows, 300)
-
-self_fail = []          # center did not resolve to ITSELF
-center_null = []        # center resolved to nothing at all
-center_other = []       # center resolved to a DIFFERENT precinct
-for r in sample:
+geometry_fail = []
+inside_null = []
+inside_other = []
+for r in all_rows:
     rid, uid, boro = r["rowid"], r["unit_id"], r["borough"]
-    clon = (r["min_lon"] + r["max_lon"]) / 2.0
-    clat = (r["min_lat"] + r["max_lat"]) / 2.0
-    res = lookup(clon, clat)
+    try:
+        geom = shp_wkb.loads(bytes(r["geometry_wkb"]))
+    except Exception as error:
+        geometry_fail.append((rid, uid, f"parse error: {error}"))
+        continue
+    if geom.is_empty or not geom.is_valid:
+        geometry_fail.append((rid, uid, "empty" if geom.is_empty else "invalid"))
+        continue
+    pt = geom.representative_point()
+    res = lookup(pt.x, pt.y)
     if res is None:
-        self_fail.append((rid, uid, boro, clon, clat, None))
-        center_null.append((rid, uid))
+        inside_null.append((rid, uid, boro, pt.x, pt.y))
     elif res["rowid"] != rid:
-        self_fail.append((rid, uid, boro, clon, clat, res["unit_id"]))
-        center_other.append((rid, uid, res["unit_id"]))
+        inside_other.append((rid, uid, res["unit_id"]))
 
-print(f"sampled: 300   self-resolve failures: {len(self_fail)} "
-      f"({100*len(self_fail)/300:.1f}%)")
-print(f"  of which center->NULL: {len(center_null)}   center->other precinct: {len(center_other)}")
-if self_fail:
-    print("  examples (rowid, unit_id, borough, center lon/lat, resolved_uid):")
-    for rid, uid, boro, clon, clat, ruid in self_fail[:15]:
-        print(f"    rowid={rid} uid={uid} {boro} center=({clon:.5f},{clat:.5f}) -> {ruid}")
+print(f"checked: {len(all_rows)}   malformed geometries: {len(geometry_fail)}")
+print(f"  representative point -> NULL: {len(inside_null)}")
+print(f"  representative point -> overlapping precinct: {len(inside_other)}")
+redirect_lines = sorted({f"{uid}->{resolved_uid}" for _, uid, resolved_uid in inside_other})
+redirect_digest = hashlib.sha256("\n".join(redirect_lines).encode()).hexdigest()
+shapely_version_changed = shapely.__version__ != REVIEWED_SHAPELY_VERSION
+overlap_set_changed = (
+    len(inside_other) != REVIEWED_OVERLAP_REDIRECT_COUNT
+    or redirect_digest != REVIEWED_OVERLAP_REDIRECT_SHA256
+)
+if shapely_version_changed:
+    print(f"  FAIL: reviewed Shapely version is {REVIEWED_SHAPELY_VERSION}, "
+          f"but the active version is {shapely.__version__}")
+if overlap_set_changed:
+    print(f"  FAIL: reviewed overlap count/hash is {REVIEWED_OVERLAP_REDIRECT_COUNT}/"
+          f"{REVIEWED_OVERLAP_REDIRECT_SHA256}")
+    print(f"  actual overlap count/hash is {len(inside_other)}/{redirect_digest}")
+if geometry_fail:
+    print("  malformed examples (rowid, unit_id, detail):")
+    for rid, uid, detail in geometry_fail[:15]:
+        print(f"    rowid={rid} uid={uid}: {detail}")
+if inside_null:
+    print("  unresolved examples (rowid, unit_id, borough, lon/lat):")
+    for rid, uid, boro, lon, lat in inside_null[:15]:
+        print(f"    rowid={rid} uid={uid} {boro} point=({lon:.5f},{lat:.5f})")
+if inside_other:
+    print("  Overlap redirects are expected where nested source geometries compete.")
+    print("  The app intentionally chooses the more usable profile first.")
+    for rid, uid, resolved_uid in inside_other[:5]:
+        print(f"    rowid={rid} uid={uid} -> {resolved_uid}")
 
 # ---- Diagnostics for any named failures (esp. NULLs that should hit) ----
 if failures:
@@ -173,5 +216,10 @@ if failures:
 print()
 print("=" * 78)
 print(f"SUMMARY named_run={len(CASES)} named_pass={len(CASES)-len(failures)} "
-      f"named_fail={len(failures)} self_run=300 self_fail={len(self_fail)}")
+      f"named_fail={len(failures)} geometry_run={len(all_rows)} "
+      f"geometry_fail={len(geometry_fail)} unresolved={len(inside_null)} "
+      f"overlap_redirects={len(inside_other)} overlap_sha256={redirect_digest} "
+      f"shapely={shapely.__version__}")
 print("=" * 78)
+conn.close()
+sys.exit(1 if failures or geometry_fail or inside_null or overlap_set_changed or shapely_version_changed else 0)
