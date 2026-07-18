@@ -22,3 +22,19 @@ build/
 .DS_Store
 PrecinctWeather/build-*/
 site/assets/_backup_*/
+
+# local tooling and working notes - this machine only
+CLAUDE.md
+AGENTS.md
+.claude/
+package.json
+package-lock.json
+capture.js
+batch2-investigate.js
+census-methodology.js
+critique-workflow.js
+DATA_PERMISSION_REQUESTS.md
+LAUNCH_READINESS.md
+UI_UX_AUDIT.md
+site/index-v*.html
+site/type-test.html
