@@ -233,7 +233,7 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
             // Worded so it's also true for covered-state users standing on water.
             if !warnedOutOfCoverage {
                 warnedOutOfCoverage = true
-                toast = "No precinct at your location. Precinct covers NY, CA, MA, and TX. Tap the map to explore."
+                toast = "No precinct at your location. Precinctly covers NY, CA, MA, and TX. Tap the map to explore."
             }
             retryAutomaticRecenterIfNeeded()
             return

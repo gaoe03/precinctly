@@ -69,7 +69,7 @@ struct SettingsView: View {
                 }
 
                 Section("Widget") {
-                    Text("Add the Precinct widget from your Home Screen: touch and hold an empty spot, tap Edit, then Add Widget, and search for Precinct.")
+                    Text("Add the Precinctly widget from your Home Screen: touch and hold an empty spot, tap Edit, then Add Widget, and search for Precinctly.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
 

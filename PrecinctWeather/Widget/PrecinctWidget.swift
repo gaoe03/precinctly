@@ -113,7 +113,7 @@ struct PrecinctWidget: Widget {
         }
         // Margins are ours so the ledger rules can run edge to edge like a printed sheet.
         .contentMarginsDisabled()
-        .configurationDisplayName("Precinct")
+        .configurationDisplayName("Precinctly")
         .description("The political lean and demographics of where you are.")
         .supportedFamilies([.systemSmall, .systemMedium])
     }
@@ -257,8 +257,8 @@ struct PrecinctHomeView: View {
         VStack(spacing: 6) {
             Image("WidgetPin").resizable().scaledToFit().frame(width: 20, height: 24)
             Text(entry.outOfCoverage
-                 ? "No precinct here yet. Precinct covers \(Coverage.abbrList)."
-                 : "Open Precinct and allow precise location").font(.caption)
+                 ? "No precinct here yet. Precinctly covers \(Coverage.abbrList)."
+                 : "Open Precinctly and allow precise location").font(.caption)
                 .multilineTextAlignment(.center).foregroundStyle(.secondary)
         }
     }
@@ -329,7 +329,7 @@ struct PrecinctLockWidget: Widget {
             PrecinctLockView(entry: entry)
                 .containerBackground(.clear, for: .widget)
         }
-        .configurationDisplayName("Precinct (Lock Screen)")
+        .configurationDisplayName("Precinctly (Lock Screen)")
         .description("Glance at your precinct's lean and top demographic.")
         .supportedFamilies([.accessoryRectangular, .accessoryInline, .accessoryCircular])
     }
@@ -354,9 +354,9 @@ struct PrecinctLockView: View {
             }
         default: // accessoryRectangular
             VStack(alignment: .leading, spacing: 1) {
-                Text(p.map(precinctTitle) ?? "Precinct").font(.headline).widgetAccentable().lineLimit(1)
+                Text(p.map(precinctTitle) ?? "Precinctly").font(.headline).widgetAccentable().lineLimit(1)
                 Text(p.map { "\(countyDisplay($0.borough)), \($0.state)" }
-                     ?? (entry.outOfCoverage ? "No precinct here yet" : "Open Precinct"))
+                     ?? (entry.outOfCoverage ? "No precinct here yet" : "Open Precinctly"))
                     .font(.caption2).lineLimit(1)
                 Text("\(p?.leanShort ?? "—")" + (rectSubline(p).map { ", \($0)" } ?? "")).font(.caption).lineLimit(1)
                 if let p, let top = p.raceBreakdown.first {
@@ -375,7 +375,7 @@ struct PrecinctLockView: View {
     }
 
     private func inlineText(_ p: PrecinctProfile?) -> String {
-        guard let p else { return entry.outOfCoverage ? "No precinct here yet" : "Open Precinct" }
+        guard let p else { return entry.outOfCoverage ? "No precinct here yet" : "Open Precinctly" }
         var parts = [p.leanShort]
         if let top = p.raceBreakdown.first { parts.append("\(pctStr(top.value)) \(top.label)") }
         if let inc = p.incomeMedian { parts.append(moneyShort(inc)) }

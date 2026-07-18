@@ -73,7 +73,7 @@ struct SearchView: View {
                         noticeView(
                             icon: "mappin.slash",
                             title: "Outside covered states",
-                            detail: "Precinct currently covers California, Massachusetts, New York, and Texas. Try another address, or close search to explore the map."
+                            detail: "Precinctly currently covers California, Massachusetts, New York, and Texas. Try another address, or close search to explore the map."
                         ) {
                             Button("Clear search") { query = "" }
                         }

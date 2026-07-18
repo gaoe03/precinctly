@@ -4,8 +4,8 @@ struct SourcesView: View {
     var body: some View {
         List {
             Section("How the data is built") {
-                Text("Precinct combines boundaries, election results, and demographic statistics into an offline SQLite database. We join and crosswalk records, simplify map shapes, and calculate the values shown in the app.")
-                Text("No source listed here endorses Precinct. Data is provided as is.")
+                Text("Precinctly combines boundaries, election results, and demographic statistics into an offline SQLite database. We join and crosswalk records, simplify map shapes, and calculate the values shown in the app.")
+                Text("No source listed here endorses Precinctly. Data is provided as is.")
                     .foregroundStyle(.secondary)
             }
 

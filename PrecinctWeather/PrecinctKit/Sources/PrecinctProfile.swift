@@ -6,7 +6,7 @@ public enum Coverage {
     /// Abbreviated list for tight surfaces (toasts, widgets).
     public static let abbrList = "NY, CA, MA, and TX"
     /// Full-name sentence for calm surfaces (onboarding, Settings).
-    public static let namesSentence = "Precinct covers New York, California, Massachusetts, and Texas, with more states coming."
+    public static let namesSentence = "Precinctly covers New York, California, Massachusetts, and Texas, with more states coming."
 }
 
 /// Precinct names from state files are often zero-padded ids ("000056" in NY/TX). Strip the
