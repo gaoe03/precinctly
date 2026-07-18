@@ -9,13 +9,19 @@ public enum Coverage {
     public static let namesSentence = "Precinct covers New York, California, Massachusetts, and Texas, with more states coming."
 }
 
-/// TX (and some CA) precinct names are zero-padded election ids ("000363"); strip the
-/// padding at display time so titles read "Precinct 363", not machine output. Names that
-/// don't start with a zero ("AD 65 ED 21", "Chatham Town Precinct 1") pass through.
+/// Precinct names from state files are often zero-padded ids ("000056" in NY/TX). Strip the
+/// padding at display time so they read "56", not machine output. Real names
+/// ("AD 65 ED 21", "Chatham Town Precinct 1") pass through unchanged.
 public func precinctDisplayName(_ raw: String) -> String {
-    guard raw.hasPrefix("0") else { return raw }
-    let stripped = raw.drop(while: { $0 == "0" })
+    guard !raw.isEmpty, raw.allSatisfy(\.isNumber) else { return raw }
+    let stripped = raw.drop { $0 == "0" }
     return stripped.isEmpty ? "0" : String(stripped)
+}
+
+/// Standalone precinct title: bare numeric ids read "Precinct 56"; real names pass through.
+public func precinctTitleDisplay(_ name: String) -> String {
+    guard !name.isEmpty, name.allSatisfy(\.isNumber) else { return name }
+    return "Precinct \(precinctDisplayName(name))"
 }
 
 /// The `borough` column holds a bare county name everywhere except NYC, where it's a borough
@@ -28,6 +34,7 @@ public func countyDisplay(_ borough: String) -> String {
     guard !lower.hasSuffix("county"), !lower.hasSuffix("city"), !lower.hasSuffix("borough") else { return borough }
     return "\(borough) County"
 }
+
 
 /// Display-ready profile for a single precinct. Mirrors the precomputed columns
 /// in the bundled SQLite. Codable so it can be cached in the App Group.

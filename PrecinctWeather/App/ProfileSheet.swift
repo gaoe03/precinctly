@@ -190,6 +190,25 @@ private struct LeanHero: View {
     private var labelText: String? {
         profile.leanLabel ?? (profile.leanDemShare == nil ? "No election data" : nil)
     }
+    private var accessibilityText: String {
+        var parts = [
+            "\(countyDisplay(profile.borough)), \(profile.state)" + (profile.precinctName.map { ", \(precinctTitleDisplay($0))" } ?? ""),
+            "Political lean \(profile.leanShort)"
+        ]
+        if let labelText {
+            parts.append(labelText + (profile.leanYear.map { " in \($0)" } ?? ""))
+        }
+        if let share = profile.leanDemShare {
+            parts.append("\(Fmt.pct(share)) Democratic, \(Fmt.pct(1 - share)) Republican")
+            if let votes = profile.leanVotes, votes < 100 {
+                parts.append("Based on only \(votes) vote\(votes == 1 ? "" : "s") cast")
+            }
+            if let turnout = profile.turnoutEst, turnout <= 1.05 {
+                parts.append("\(Fmt.pct(min(turnout, 1))) turnout" + (profile.leanYear.map { " in \($0)" } ?? ""))
+            }
+        }
+        return parts.joined(separator: ". ")
+    }
     var body: some View {
         VStack(spacing: 5) {
             Text("\(countyDisplay(profile.borough)), \(profile.state)" + (profile.precinctName.map { " (\(precinctDisplayName($0)))" } ?? ""))
@@ -225,7 +244,7 @@ private struct LeanHero: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(countyDisplay(profile.borough)). Political lean \(profile.leanShort), \(profile.leanLabel ?? "no election data")")
+        .accessibilityLabel(accessibilityText)
     }
 }
 

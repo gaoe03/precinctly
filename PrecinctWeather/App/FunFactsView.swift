@@ -46,17 +46,8 @@ struct FunFactsView: View {
                 Section { scopeRow }
 
                 if loading && overview == nil {
-                    // A redacted skeleton of the overview grid reads as "loading this layout" rather
-                    // than a bare spinner on a page whose shape is already known. Includes a dummy
-                    // LeanBar so the section doesn't grow (and shove the page down) when data lands.
-                    Section {
-                        OverviewGrid(overview: ScopeOverview(precinctCount: 8888, totalPopulation: 8_800_000,
-                                                             avgDemShare: 0.5, medianIncome: 88888, leanBuckets: []))
-                        LeanBar(buckets: [LeanBucket(label: "Solid Rep", count: 2), LeanBucket(label: "Lean Rep", count: 1),
-                                          LeanBucket(label: "Even", count: 1), LeanBucket(label: "Lean Dem", count: 1),
-                                          LeanBucket(label: "Solid Dem", count: 2)])
-                    }
-                    .redacted(reason: .placeholder)
+                    ProgressView().frame(maxWidth: .infinity).padding(.vertical, 40)
+                        .listRowBackground(Color.clear).listRowSeparator(.hidden)
                 }
 
                 if let overview {
@@ -98,8 +89,11 @@ struct FunFactsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $showAbout) { AboutDataSheet() }
             .sheet(isPresented: $showCountyPicker) {
-                CountyPicker(counties: counties, county: $county,
-                             stateDisplay: stateName(model.selectedState))
+                CountyPicker(
+                    state: model.selectedState,
+                    counties: counties,
+                    selection: $county
+                )
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -120,6 +114,7 @@ struct FunFactsView: View {
             }
         }
         .task(id: model.selectedState) {
+            county = nil
             counties = PrecinctDB.shared.counties(state: model.selectedState)
         }
         .task(id: scopeKey) {
@@ -140,76 +135,52 @@ struct FunFactsView: View {
     }
 
     private func tap(_ f: FunFact) {
-        // Exact winner by id when we have it: a concave precinct's bbox center can sit in a
-        // neighbor (or water), and announcing one precinct then selecting another breaks trust.
-        if let uid = f.unitID {
-            model.selectByUnitID(uid)
-            model.showFunFacts = false
-        } else if let la = f.lat, let lo = f.lon {
-            model.selectByTap(lat: la, lon: lo)
-            model.showFunFacts = false
-        }
+        guard let unitID = f.unitID, let la = f.lat, let lo = f.lon,
+              model.selectByUnitID(unitID, fallbackLat: la, fallbackLon: lo) else { return }
+        model.showFunFacts = false
     }
 
-    // Small states get an inline Menu; past ~30 counties (TX has 254) a flat menu is
-    // unnavigable, so the row opens a searchable list instead.
-    @ViewBuilder
     private var scopeRow: some View {
-        if counties.count > 30 {
-            Button { showCountyPicker = true } label: { scopeLabel }
-        } else {
-            Menu {
-                Button { county = nil } label: {
-                    if county == nil { Label("All of \(stateName(model.selectedState))", systemImage: "checkmark") }
-                    else { Text("All of \(stateName(model.selectedState))") }
-                }
-                ForEach(counties, id: \.self) { c in
-                    Button { county = c } label: {
-                        if county == c { Label(countyDisplay(c), systemImage: "checkmark") } else { Text(countyDisplay(c)) }
-                    }
-                }
-            } label: { scopeLabel }
+        Button { showCountyPicker = true } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "line.3.horizontal.decrease.circle.fill").foregroundStyle(.tint)
+                Text(county.map { countyDisplay($0) } ?? "All of \(stateName(model.selectedState))")
+                    .fontWeight(.semibold).foregroundStyle(.primary).lineLimit(1)
+                Spacer()
+                Image(systemName: "chevron.up.chevron.down").font(.caption).foregroundStyle(.secondary)
+            }
+            .contentShape(Rectangle())
         }
-    }
-
-    private var scopeLabel: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "line.3.horizontal.decrease.circle.fill").foregroundStyle(.tint)
-            Text(county.map { countyDisplay($0) } ?? "All of \(stateName(model.selectedState))")
-                .fontWeight(.semibold).foregroundStyle(.primary).lineLimit(1)
-            Spacer()
-            Image(systemName: "chevron.up.chevron.down").font(.caption).foregroundStyle(.secondary)
-        }
-        .contentShape(Rectangle())
+        .accessibilityHint("Choose a county")
     }
 }
 
-/// Searchable county list for big states. Selecting dismisses; the row's checkmark mirrors
-/// the Menu variant so both pickers feel like the same control.
 private struct CountyPicker: View {
-    let counties: [String]
-    @Binding var county: String?
-    let stateDisplay: String
-    @State private var query = ""
     @Environment(\.dismiss) private var dismiss
+    let state: String
+    let counties: [String]
+    @Binding var selection: String?
+    @State private var query = ""
 
     private var filtered: [String] {
-        query.isEmpty ? counties
-            : counties.filter { countyDisplay($0).localizedCaseInsensitiveContains(query) }
+        guard !query.isEmpty else { return counties }
+        return counties.filter { countyDisplay($0).localizedCaseInsensitiveContains(query) }
     }
 
     var body: some View {
         NavigationStack {
             List {
-                if query.isEmpty {
-                    row(nil, title: "All of \(stateDisplay)")
+                Button { choose(nil) } label: {
+                    choiceLabel("All of \(stateName(state))", selected: selection == nil)
                 }
-                ForEach(filtered, id: \.self) { c in
-                    row(c, title: countyDisplay(c))
+                ForEach(filtered, id: \.self) { county in
+                    Button { choose(county) } label: {
+                        choiceLabel(countyDisplay(county), selected: selection == county)
+                    }
                 }
             }
             .searchable(text: $query, prompt: "Search counties")
-            .navigationTitle("Counties")
+            .navigationTitle("Choose a County")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
@@ -217,16 +188,18 @@ private struct CountyPicker: View {
         }
     }
 
-    private func row(_ value: String?, title: String) -> some View {
-        Button {
-            county = value
-            dismiss()
-        } label: {
-            HStack {
-                Text(title).foregroundStyle(.primary)
-                Spacer()
-                if county == value { Image(systemName: "checkmark").foregroundStyle(.tint) }
-            }
+    private func choose(_ county: String?) {
+        selection = county
+        dismiss()
+    }
+
+    private func choiceLabel(_ title: String, selected: Bool) -> some View {
+        HStack {
+            // Color.primary, not the hierarchical .primary: inside a List Button the
+            // hierarchy resolves against the tint and every row renders link-blue.
+            Text(title).foregroundStyle(Color.primary)
+            Spacer()
+            if selected { Image(systemName: "checkmark").foregroundStyle(.tint) }
         }
     }
 }
@@ -279,8 +252,8 @@ private func shortPlace(_ p: String) -> String { p.components(separatedBy: " (")
 func factTint(_ f: FunFact) -> Color {
     guard f.category == .politics else { return .secondary }
     switch f.id {
-    case "dem", "shiftD": return Palette.dem
-    case "rep", "shiftR": return Palette.rep
+    case "dem", "shiftD": return Palette.lean(0.85)
+    case "rep", "shiftR": return Palette.lean(0.15)
     default:              return .secondary
     }
 }
@@ -299,7 +272,7 @@ private struct OverviewGrid: View {
         LazyVGrid(columns: cols, spacing: 16) {
             BigStat(value: overview.precinctCount.formatted(), label: "Precincts", delta: nil)
             BigStat(value: overview.totalPopulation.map { Fmt.compact($0) } ?? "No data", label: "Population", delta: nil)
-            BigStat(value: leanText, label: "Avg lean", delta: nil, valueColor: Palette.lean(overview.avgDemShare))
+            BigStat(value: leanText, label: "Avg precinct lean", delta: nil, valueColor: Palette.lean(overview.avgDemShare))
             BigStat(value: overview.medianIncome.map { Fmt.incomeTopCoded($0) } ?? "No data", label: "Median income", delta: nil)
         }
         .padding(.vertical, 4)
@@ -335,9 +308,9 @@ private struct LeanBar: View {
             .accessibilityElement()
             .accessibilityLabel("Lean distribution: " + ordered.map { "\($0.count) \($0.label)" }.joined(separator: ", "))
             HStack {
-                Text("Democratic").font(.caption2).foregroundStyle(Palette.dem)
+                Text("Democratic").font(.caption2).foregroundStyle(Palette.lean(0.85))
                 Spacer()
-                Text("Republican").font(.caption2).foregroundStyle(Palette.rep)
+                Text("Republican").font(.caption2).foregroundStyle(Palette.lean(0.15))
             }
         }
         .padding(.vertical, 4)
@@ -361,20 +334,16 @@ private struct SeeAllChip: View {
 
 /// One superlative as a List row (no card chrome — the inset section provides the background).
 /// The row taps to the winning precinct; the chip (if a crowd) drills into the full list.
-/// No leading icon coin: a column of identical gray SF-Symbol circles is Settings-app furniture
-/// that carries zero information here (RangeRow proves the layout works without one). The value
-/// itself wears the semantic tint where partisanship is the meaning.
 private struct FactRow: View {
     let fact: FunFact
     var onTap: () -> Void = {}
     var onSeeAll: (LeaderboardSpec) -> Void = { _ in }
-    private var valueTint: Color {
-        let t = factTint(fact)
-        return t == .secondary ? .primary : t
-    }
 
     var body: some View {
-        HStack(spacing: 12) {
+        accessibleRow(HStack(spacing: 12) {
+            Image(systemName: fact.icon).font(.body).foregroundStyle(factTint(fact))
+                .frame(width: 34, height: 34)
+                .background(Color(.tertiarySystemFill), in: Circle())
             VStack(alignment: .leading, spacing: 2) {
                 Text(fact.title).font(.subheadline.weight(.semibold)).lineLimit(2)
                 if let sub = fact.subtitle {
@@ -386,7 +355,6 @@ private struct FactRow: View {
             Spacer(minLength: 10)
             VStack(alignment: .trailing, spacing: 5) {
                 Text(fact.value).font(.headline.bold().monospacedDigit())
-                    .foregroundStyle(valueTint)
                     .lineLimit(1).fixedSize()
                 if let lb = fact.leaderboard {
                     Button { onSeeAll(lb) } label: { SeeAllChip(tieCount: fact.tieCount) }.buttonStyle(.plain)
@@ -395,10 +363,23 @@ private struct FactRow: View {
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
-        .onTapGesture { onTap() }
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction { onTap() }
+        .onTapGesture { onTap() })
+    }
+
+    @ViewBuilder
+    private func accessibleRow<Content: View>(_ content: Content) -> some View {
+        if let leaderboard = fact.leaderboard {
+            content
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction { onTap() }
+                .accessibilityAction(named: "See all rankings") { onSeeAll(leaderboard) }
+        } else {
+            content
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction { onTap() }
+        }
     }
 }
 
@@ -426,7 +407,7 @@ private struct RangeRow: View {
     // high — so the track signals which way the variable grows instead of being flat gray.
     private var track: LinearGradient {
         partisan
-            ? LinearGradient(colors: [Palette.rep, Palette.lean(0.5), Palette.dem],
+            ? LinearGradient(colors: [Palette.lean(0.12), Palette.lean(0.5), Palette.lean(0.88)],
                              startPoint: .leading, endPoint: .trailing)
             : LinearGradient(colors: [Palette.rankTint(4), Palette.rankTint(0)],
                              startPoint: .leading, endPoint: .trailing)
@@ -440,10 +421,7 @@ private struct RangeRow: View {
                 ZStack {
                     Capsule().fill(track).frame(height: 5)
                     Image(systemName: "chevron.compact.right")
-                        .font(.caption2.weight(.bold))
-                        // White vanishes on the light end of the neutral ramp in light mode;
-                        // primary ink reads on both tracks in both schemes.
-                        .foregroundStyle(partisan ? Color.white.opacity(0.9) : Color.primary.opacity(0.7))
+                        .font(.caption2.weight(.bold)).foregroundStyle(.white.opacity(0.9))
                 }
                 .frame(maxWidth: .infinity)
                 endpoint(high, align: .trailing)
@@ -517,6 +495,7 @@ private struct AboutDataSheet: View {
                 Section("Where this comes from") {
                     aboutRow("Votes", "The most recent presidential election, counted by precinct.")
                     aboutRow("People and money", "The 2020 Census and the Census Bureau's American Community Survey, a rolling five-year estimate.")
+                    NavigationLink("Sources and licenses") { SourcesView() }
                 }
                 Section("Things worth knowing") {
                     aboutRow("Income tops out", "The Census reports household income only up to $250,000, shown here as $250k+, so many well-off precincts tie at that ceiling.")
@@ -583,7 +562,7 @@ private struct PrecinctLeaderboard: View {
     }
 
     private func go(_ r: LeaderRow) {
-        model.selectByUnitID(r.id)   // exact precinct, not a bbox-center point-in-polygon
+        guard model.selectByUnitID(r.id, fallbackLat: r.lat, fallbackLon: r.lon) else { return }
         model.showFunFacts = false
     }
 
@@ -604,8 +583,7 @@ private struct PrecinctLeaderboard: View {
 
     private func place(_ r: LeaderRow) -> String {
         let c = countyDisplay(r.borough)
-        let n = precinctDisplayName(r.precinctName)
-        return n.isEmpty ? "\(c), \(r.state)" : "\(c), \(r.state) (\(n))"
+        return r.precinctName.isEmpty ? "\(c), \(r.state)" : "\(c), \(r.state) (\(precinctDisplayName(r.precinctName)))"
     }
 
     private func row(_ rank: Int, _ r: LeaderRow) -> some View {

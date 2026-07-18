@@ -25,13 +25,29 @@ public final class PrecinctDB {
             assertionFailure("nyc_precincts.sqlite missing from PrecinctKit bundle")
             return
         }
+        openDatabase(at: url)
+        if db == nil { assertionFailure("bundled DB failed validation") }
+    }
+
+    /// Test seam for verifying unavailable and malformed database behavior without changing the
+    /// public API. Production always uses the private bundle initializer above.
+    init(databaseURL: URL) {
+        openDatabase(at: databaseURL)
+    }
+
+    private func openDatabase(at url: URL) {
         // FULLMUTEX: the widget process hosts two providers that WidgetKit refreshes on
         // background threads with no serialization guarantee, so the shared (read-only)
         // connection needs SQLite's own locking. App code still stays on main by design.
         if sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil) != SQLITE_OK {
             sqlite3_close(db)   // a failed open still allocates a handle
             db = nil
-            assertionFailure("bundled DB failed to open")
+            return
+        }
+        guard schemaIsUsable else {
+            sqlite3_close(db)
+            db = nil
+            return
         }
     }
 
@@ -39,6 +55,39 @@ public final class PrecinctDB {
 
     /// False if the bundled database failed to open (lets the UI show a distinct error).
     public var isAvailable: Bool { db != nil }
+
+    /// Cheap launch-time contract check. Full integrity and data invariants belong in the release
+    /// test suite; these prepares only prevent a wrong or stale schema from masquerading as no data.
+    private var schemaIsUsable: Bool {
+        let queries = [
+            """
+            SELECT unit_id, borough, state, precinct_name, lean_label, lean_dem_share,
+                   prev_dem_share, lean_year, prev_year, lean_shift, lean_votes, turnout_est,
+                   pop_total, vap_total, cvap, pct_white, pct_black, pct_hispanic, pct_asian,
+                   pct_native, pct_pacific, pct_other, plurality_group, pct_no_hs, pct_hs,
+                   pct_bachelors, pct_graduate, pct_ba_or_higher, income_median, pop_density,
+                   avg_age, pct_renter, pct_owner, data_complete, geometry_wkb,
+                   min_lon, max_lon, min_lat, max_lat FROM precincts LIMIT 0
+            """,
+            "SELECT id, min_lon, max_lon, min_lat, max_lat FROM precinct_rtree LIMIT 0",
+            "SELECT unit_id, office, year, dem, rep, other, dem_share FROM precinct_elections LIMIT 0",
+            """
+            SELECT scope, pct_white, pct_black, pct_hispanic, pct_asian,
+                   pct_ba_or_higher, income_median, pct_renter, avg_age, pres24_dem_share
+            FROM baselines LIMIT 0
+            """,
+            "SELECT state, borough, lean_label, dem_share, geometry_wkb FROM county_lean_regions LIMIT 0",
+        ]
+        for query in queries {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK else {
+                sqlite3_finalize(statement)
+                return false
+            }
+            sqlite3_finalize(statement)
+        }
+        return true
+    }
 
     // MARK: Coordinate -> precinct
 
@@ -56,10 +105,9 @@ public final class PrecinctDB {
         return nil
     }
 
-    /// Resolve a precinct by its unit_id (no point-in-polygon). Used when the caller already knows
-    /// the exact precinct (a leaderboard row), so a concave shape whose bbox center falls outside
-    /// itself can't select a neighbor. Reuses `row(id:)` for the profile parse.
-    public func lookupByUnitID(_ unitID: String)
+    /// Exact selection for rows already identified by a leaderboard or other DB query.
+    /// This avoids re-resolving a bounding-box midpoint that may sit outside a concave precinct.
+    public func precinct(unitID: String)
         -> (profile: PrecinctProfile, rings: [[CLLocationCoordinate2D]])? {
         let sql = "SELECT rowid FROM precincts WHERE unit_id = ?"
         var stmt: OpaquePointer?
@@ -91,8 +139,14 @@ public final class PrecinctDB {
 
     private func candidateIDs(lon: Double, lat: Double) -> [Int32] {
         let sql = """
-            SELECT id FROM precinct_rtree
-            WHERE ? BETWEEN min_lon AND max_lon AND ? BETWEEN min_lat AND max_lat
+            SELECT r.id FROM precinct_rtree AS r
+            JOIN precincts AS p ON p.rowid = r.id
+            WHERE ? BETWEEN r.min_lon AND r.max_lon AND ? BETWEEN r.min_lat AND r.max_lat
+            ORDER BY p.data_complete DESC,
+                     (p.lean_dem_share IS NOT NULL) DESC,
+                     (p.pop_total IS NOT NULL AND p.pop_total > 0) DESC,
+                     ((p.max_lon - p.min_lon) * (p.max_lat - p.min_lat)) ASC,
+                     r.id ASC
             """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
@@ -123,6 +177,7 @@ public final class PrecinctDB {
     /// (lon,lat) win so the tint is a contiguous blob, not scattered.
     public func countyRows(state: String, county: String, lon: Double, lat: Double,
                            limit: Int = 1000) -> [(id: String, demShare: Double?, wkb: Data)] {
+        guard let boundedLimit = Self.boundedLimit(limit, maximum: 1_000) else { return [] }
         let sql = """
             SELECT unit_id, lean_dem_share, geometry_wkb
             FROM precincts
@@ -138,7 +193,7 @@ public final class PrecinctDB {
         sqlite3_bind_text(stmt, 2, county, -1, SQLITE_TRANSIENT)
         sqlite3_bind_double(stmt, 3, lon); sqlite3_bind_double(stmt, 4, lon)
         sqlite3_bind_double(stmt, 5, lat); sqlite3_bind_double(stmt, 6, lat)
-        sqlite3_bind_int(stmt, 7, Int32(limit))
+        sqlite3_bind_int(stmt, 7, boundedLimit)
         var out: [(id: String, demShare: Double?, wkb: Data)] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             guard let uid = text(stmt, 0), let data = blob(stmt, 2) else { continue }
@@ -264,7 +319,7 @@ public final class PrecinctDB {
         var counts: [String: Int] = [:]
         let bucketSQL = """
             SELECT lean_label, COUNT(*) FROM precincts
-            WHERE \(scope) AND lean_label IS NOT NULL GROUP BY lean_label
+            WHERE \(scope) AND lean_label IS NOT NULL AND lean_votes >= 100 GROUP BY lean_label
             """
         var bstmt: OpaquePointer?
         if sqlite3_prepare_v2(db, bucketSQL, -1, &bstmt, nil) == SQLITE_OK {
@@ -298,9 +353,9 @@ public final class PrecinctDB {
             if county != nil {
                 if pname.isEmpty { return "\(countyDisplay(boro)), \(st)" }
                 // MA names already read "Chatham Town Precinct 1"; don't double the word.
-                return pname.localizedCaseInsensitiveContains("precinct") ? pname : "Precinct \(pname)"
+                return pname.localizedCaseInsensitiveContains("precinct") ? pname : "Precinct \(precinctDisplayName(pname))"
             }
-            return pname.isEmpty ? "\(countyDisplay(boro)), \(st)" : "\(countyDisplay(boro)), \(st) (\(pname))"
+            return pname.isEmpty ? "\(countyDisplay(boro)), \(st)" : "\(countyDisplay(boro)), \(st) (\(precinctDisplayName(pname)))"
         }
 
         // A cap/ceiling tie: the column shown per row, the SQL band that defines "shares the
@@ -331,8 +386,8 @@ public final class PrecinctDB {
                  pairKey: String? = nil, subtitle: String? = nil, tie: Tie? = nil,
                  fmt: (Double) -> String) {
             let sql = """
-                SELECT borough, state, precinct_name, \(column),
-                       (min_lon + max_lon) / 2.0, (min_lat + max_lat) / 2.0, unit_id
+                SELECT unit_id, borough, state, precinct_name, \(column),
+                       (min_lon + max_lon) / 2.0, (min_lat + max_lat) / 2.0
                 FROM precincts
                 WHERE \(scope) AND \(column) IS NOT NULL\(filter.isEmpty ? "" : " AND \(filter)")
                 ORDER BY \(column) \(ascending ? "ASC" : "DESC"), pop_total DESC, unit_id ASC LIMIT 1
@@ -342,16 +397,16 @@ public final class PrecinctDB {
             defer { sqlite3_finalize(stmt) }
             bindTexts(stmt, scopeBinds)
             guard sqlite3_step(stmt) == SQLITE_ROW else { return }
-            let place = placeStr(text(stmt, 0) ?? "", text(stmt, 1) ?? "", text(stmt, 2) ?? "")
+            let place = placeStr(text(stmt, 1) ?? "", text(stmt, 2) ?? "", text(stmt, 3) ?? "")
             let lb = LeaderboardSpec(factID: id, title: title,
                                      note: tie?.note ?? "The top precincts here, ranked.",
                                      state: state, county: county,
                                      valueColumn: column, baseFilter: filter,
                                      ascending: ascending, displayKind: displayKind)
             facts.append(FunFact(id: id, icon: icon, title: title,
-                                 value: fmt(sqlite3_column_double(stmt, 3)), place: place,
-                                 unitID: text(stmt, 6),
-                                 lat: sqlite3_column_double(stmt, 5), lon: sqlite3_column_double(stmt, 4),
+                                 value: fmt(sqlite3_column_double(stmt, 4)), place: place,
+                                 unitID: text(stmt, 0),
+                                 lat: sqlite3_column_double(stmt, 6), lon: sqlite3_column_double(stmt, 5),
                                  category: category, kind: kind, pairKey: pairKey, subtitle: subtitle,
                                  tieCount: tieCnt(tie, filter: filter), leaderboard: lb))
         }
@@ -364,8 +419,8 @@ public final class PrecinctDB {
                          pairKey: String? = nil, subtitle: String? = nil, tie: Tie? = nil,
                          fmt: (Double) -> String) {
             let sql = """
-                SELECT borough, state, precinct_name, (\(displayExpr)) AS v,
-                       (min_lon + max_lon) / 2.0, (min_lat + max_lat) / 2.0, unit_id
+                SELECT unit_id, borough, state, precinct_name, (\(displayExpr)) AS v,
+                       (min_lon + max_lon) / 2.0, (min_lat + max_lat) / 2.0
                 FROM precincts
                 WHERE \(scope) AND (\(displayExpr)) IS NOT NULL\(filter.isEmpty ? "" : " AND \(filter)")
                 ORDER BY (\(orderExpr)) \(ascending ? "ASC" : "DESC"), pop_total DESC, unit_id ASC LIMIT 1
@@ -375,16 +430,16 @@ public final class PrecinctDB {
             defer { sqlite3_finalize(stmt) }
             bindTexts(stmt, scopeBinds)
             guard sqlite3_step(stmt) == SQLITE_ROW else { return }
-            let place = placeStr(text(stmt, 0) ?? "", text(stmt, 1) ?? "", text(stmt, 2) ?? "")
+            let place = placeStr(text(stmt, 1) ?? "", text(stmt, 2) ?? "", text(stmt, 3) ?? "")
             let lb = LeaderboardSpec(factID: id, title: title,
                                      note: tie?.note ?? "The top precincts here, ranked.",
                                      state: state, county: county,
                                      valueColumn: displayExpr, orderExpr: orderExpr, baseFilter: filter,
                                      ascending: ascending, displayKind: displayKind)
             facts.append(FunFact(id: id, icon: icon, title: title,
-                                 value: fmt(sqlite3_column_double(stmt, 3)), place: place,
-                                 unitID: text(stmt, 6),
-                                 lat: sqlite3_column_double(stmt, 5), lon: sqlite3_column_double(stmt, 4),
+                                 value: fmt(sqlite3_column_double(stmt, 4)), place: place,
+                                 unitID: text(stmt, 0),
+                                 lat: sqlite3_column_double(stmt, 6), lon: sqlite3_column_double(stmt, 5),
                                  category: category, kind: kind, pairKey: pairKey, subtitle: subtitle,
                                  tieCount: tieCnt(tie, filter: filter), leaderboard: lb))
         }
@@ -409,8 +464,8 @@ public final class PrecinctDB {
             guard let y = year else { return }
 
             let sql = """
-                SELECT p.borough, p.state, p.precinct_name, (se.dem_share - ps.dem_share) AS v,
-                       (p.min_lon + p.max_lon) / 2.0, (p.min_lat + p.max_lat) / 2.0, p.unit_id
+                SELECT p.unit_id, p.borough, p.state, p.precinct_name, (se.dem_share - ps.dem_share) AS v,
+                       (p.min_lon + p.max_lon) / 2.0, (p.min_lat + p.max_lat) / 2.0
                 FROM precincts p
                 JOIN precinct_elections ps ON ps.unit_id = p.unit_id AND ps.office = 'president' AND ps.year = \(y)
                 JOIN precinct_elections se ON se.unit_id = p.unit_id AND se.office = 'senate'    AND se.year = \(y)
@@ -423,16 +478,16 @@ public final class PrecinctDB {
             defer { sqlite3_finalize(stmt) }
             bindTexts(stmt, scopeBinds)
             guard sqlite3_step(stmt) == SQLITE_ROW else { return }
-            let v = sqlite3_column_double(stmt, 3)
+            let v = sqlite3_column_double(stmt, 4)
             // Short value so it fits the trailing column; the subtitle carries the Senate-vs-President
             // framing. v = senate minus president Dem share, i.e. how much more one office leaned.
             let value = v >= 0 ? "D+\(Int((v * 100).rounded())) split"
                                : "R+\(Int((abs(v) * 100).rounded())) split"
-            let place = placeStr(text(stmt, 0) ?? "", text(stmt, 1) ?? "", text(stmt, 2) ?? "")
+            let place = placeStr(text(stmt, 1) ?? "", text(stmt, 2) ?? "", text(stmt, 3) ?? "")
             facts.append(FunFact(id: "crossover", icon: "arrow.left.arrow.right",
                                  title: "Ticket-splitters", value: value, place: place,
-                                 unitID: text(stmt, 6),
-                                 lat: sqlite3_column_double(stmt, 5), lon: sqlite3_column_double(stmt, 4),
+                                 unitID: text(stmt, 0),
+                                 lat: sqlite3_column_double(stmt, 6), lon: sqlite3_column_double(stmt, 5),
                                  category: .politics, kind: .insight,
                                  subtitle: "Split most between Senate and President"))
         }
@@ -540,19 +595,20 @@ public final class PrecinctDB {
     /// Offline precinct-name search within a state (e.g. "7602", "AD 65").
     public func searchPrecincts(state: String, query: String, limit: Int = 15)
         -> [(name: String, borough: String, lat: Double, lon: Double)] {
+        guard let boundedLimit = Self.boundedLimit(limit, maximum: 100) else { return [] }
         let sql = """
             SELECT precinct_name, COALESCE(borough, ''),
                    (min_lon + max_lon) / 2.0, (min_lat + max_lat) / 2.0
             FROM precincts
-            WHERE state = ? AND precinct_name IS NOT NULL AND precinct_name LIKE ?
+            WHERE state = ? AND precinct_name IS NOT NULL AND precinct_name LIKE ? ESCAPE '\\'
             ORDER BY precinct_name LIMIT ?
             """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, state, -1, SQLITE_TRANSIENT)
-        sqlite3_bind_text(stmt, 2, "%\(query)%", -1, SQLITE_TRANSIENT)
-        sqlite3_bind_int(stmt, 3, Int32(limit))
+        sqlite3_bind_text(stmt, 2, Self.literalLikePattern(query), -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int(stmt, 3, boundedLimit)
         var out: [(name: String, borough: String, lat: Double, lon: Double)] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             guard let n = text(stmt, 0) else { continue }
@@ -565,6 +621,7 @@ public final class PrecinctDB {
     /// SAME scope + size/sanity filter as the card, so the surfaced winner is row 1. Lazy — only
     /// called when the user taps "see all". Population breaks ties so the order is deterministic.
     public func topPrecincts(_ spec: LeaderboardSpec, limit: Int = 25) -> [LeaderRow] {
+        guard let boundedLimit = Self.boundedLimit(limit, maximum: 100) else { return [] }
         let scope = spec.county == nil ? "state = ?" : "state = ? AND borough = ?"
         let scopeBinds = spec.county.map { [spec.state, $0] } ?? [spec.state]
         let sql = """
@@ -579,7 +636,7 @@ public final class PrecinctDB {
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
         defer { sqlite3_finalize(stmt) }
         bindTexts(stmt, scopeBinds)
-        sqlite3_bind_int(stmt, Int32(scopeBinds.count + 1), Int32(limit))   // LIMIT ? follows the scope binds
+        sqlite3_bind_int(stmt, Int32(scopeBinds.count + 1), boundedLimit)   // LIMIT ? follows the scope binds
         var out: [LeaderRow] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             guard let uid = text(stmt, 0) else { continue }
@@ -655,5 +712,18 @@ public final class PrecinctDB {
         for (i, v) in values.enumerated() {
             sqlite3_bind_text(stmt, Int32(i + 1), v, -1, SQLITE_TRANSIENT)
         }
+    }
+
+    private static func boundedLimit(_ value: Int, maximum: Int) -> Int32? {
+        guard value > 0 else { return nil }
+        return Int32(min(value, maximum))
+    }
+
+    private static func literalLikePattern(_ value: String) -> String {
+        let escaped = value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "%", with: "\\%")
+            .replacingOccurrences(of: "_", with: "\\_")
+        return "%\(escaped)%"
     }
 }

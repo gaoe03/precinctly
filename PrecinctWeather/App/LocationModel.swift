@@ -33,9 +33,7 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
     @Published var selection: PrecinctProfile?
     @Published var selectionCoord: CLLocationCoordinate2D?
     @Published var selectionRegion: MKCoordinateRegion?
-    /// Bumped on every (re)load so the camera flies even when re-selecting the same precinct
-    /// (e.g. "locate me" after panning away). Keyed on this instead of the precinct id.
-    @Published var selectionSerial = 0
+    @Published private(set) var selectionRevision = 0
     @Published var selectedRings: [[CLLocationCoordinate2D]] = []
     @Published var neighborPins: [PrecinctPin] = []
     @Published var presidentTrend: [ElectionResult] = []   // president Dem two-party share over time
@@ -54,43 +52,31 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
     private enum SelectionSource { case initial, gps, tap }
     private var selectionSource: SelectionSource = .initial
     private var loadedCounty: String?   // which county's precincts are currently tinted
-    /// Set by an explicit locate-me press so the camera reframes even when the precinct
-    /// didn't change. Everything else only flies when the selection actually moves,
-    /// re-tapping your own precinct shouldn't cost an animation.
-    private var forceNextReframe = false
+    private var locationServiceStarted = false
+    private var didRequestInitialLocation = false
+    private var hasManualNavigation = false
+    private var explicitRecenterAfterAuthorization = false
+    private var recenterGeneration = 0
+    private var pendingRecenterGeneration: Int?
+    private var recenterRetryCount = 0
 
     // Once-per-launch toasts; repeated location updates must not re-nag.
     private var warnedOutOfCoverage = false
     private var warnedApproximate = false
+    private var warnedInaccurate = false
+    private var warnedLocationFailure = false
     private var requestedFullAccuracy = false
-    /// True while the system permission prompt this session is outstanding. A denial that
-    /// arrives through it gets a quiet toast, not a modal (the user just answered; don't
-    /// ask again in the same breath). The modal stays for launches that start denied and
-    /// for explicit locate-me presses.
-    private var promptedThisSession = false
-    private var sessionTapCount = 0   // successful map taps, for the one-time By-the-Numbers tip
+    private var locationUnknownRetryCount = 0
 
     private let manager = CLLocationManager()
     private let haptics = UIImpactFeedbackGenerator(style: .soft)
 
     override init() {
         super.init()
-        // Open where the last GPS fix landed (so a Houston user reopens on Texas, not Times Square);
-        // fall back to the chosen default state (Settings → General). A fresh GPS fix may take over.
-        if let last = UserDefaults.standard.string(forKey: "lastGeoState"),
-           appStates.contains(where: { $0.abbr == last }) {
-            selectedState = last
-        } else if let saved = UserDefaults.standard.string(forKey: "defaultState"),
-                  appStates.contains(where: { $0.abbr == saved }) {
+        // Open to the user's chosen default state (Settings → General); a GPS fix may take over.
+        if let saved = UserDefaults.standard.string(forKey: "defaultState"),
+           appStates.contains(where: { $0.abbr == saved }) {
             selectedState = saved
-        } else {
-            // Very first launch, before any fix or preference: guess from the time zone so a
-            // Texan's or Californian's first frame is at least their own state, not Times Square.
-            switch TimeZone.current.identifier {
-            case "America/Chicago":     selectedState = "TX"
-            case "America/Los_Angeles": selectedState = "CA"
-            default: break   // Eastern (NY/MA) and everywhere else keep the NY default
-            }
         }
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
@@ -98,20 +84,13 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
     }
 
     func start() {
+        locationServiceStarted = true
         status = manager.authorizationStatus
         switch status {
-        case .notDetermined: promptedThisSession = true; manager.requestWhenInUseAuthorization()
+        case .notDetermined: manager.requestWhenInUseAuthorization()
         case .authorizedWhenInUse, .authorizedAlways: locationDenied = false; beginUpdates()
         case .denied, .restricted: noteDenied(); myCoord = nil
         @unknown default: break
-        }
-        if selection == nil {                     // keep the map alive before any fix
-            let st = appStates.first { $0.abbr == selectedState } ?? appStates[0]
-            if let hit = PrecinctDB.shared.lookup(lon: st.lon, lat: st.lat) {
-                selectionSource = .initial         // default state's main city; a GPS fix may take over
-                loadDetails(hit.profile, rings: hit.rings,
-                            at: CLLocationCoordinate2D(latitude: st.lat, longitude: st.lon))
-            }
         }
     }
 
@@ -122,11 +101,14 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
         case .authorizedWhenInUse, .authorizedAlways:
             locationDenied = false
             selectionSource = .gps              // let GPS override a prior .tap selection
-            warnedOutOfCoverage = false         // an explicit press always gets a fresh answer
-            forceNextReframe = true             // camera must respond even if the precinct is the same
-            if let c = myCoord { selectByGPS(c) } else { beginUpdates() }
+            armAutomaticRecenter()
+            if manager.accuracyAuthorization == .reducedAccuracy {
+                requestPreciseLocation()
+            } else {
+                manager.requestLocation()        // never reuse a stale or formerly approximate fix
+            }
         case .notDetermined:
-            promptedThisSession = true
+            explicitRecenterAfterAuthorization = true
             manager.requestWhenInUseAuthorization()
         case .denied, .restricted:
             locationDenied = true               // re-trigger the "Location is off" alert
@@ -136,8 +118,42 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
     }
 
     private func beginUpdates() {
+        guard locationServiceStarted, !didRequestInitialLocation else { return }
+        didRequestInitialLocation = true
+        if !hasManualNavigation { armAutomaticRecenter() }
         manager.requestLocation()
-        manager.startMonitoringSignificantLocationChanges()
+    }
+
+    private func armAutomaticRecenter() {
+        recenterGeneration += 1
+        pendingRecenterGeneration = recenterGeneration
+        recenterRetryCount = 0
+        locationUnknownRetryCount = 0
+        warnedLocationFailure = false
+    }
+
+    /// Any explicit exploration wins over a slow startup GPS callback.
+    func cancelAutomaticRecenter() {
+        hasManualNavigation = true
+        recenterGeneration += 1
+        pendingRecenterGeneration = nil
+        recenterRetryCount = 0
+    }
+
+    private func exhaustAutomaticRecenter() {
+        recenterGeneration += 1
+        pendingRecenterGeneration = nil
+        recenterRetryCount = 0
+    }
+
+    private func retryAutomaticRecenterIfNeeded() {
+        guard pendingRecenterGeneration != nil else { return }
+        guard recenterRetryCount < 1 else {
+            exhaustAutomaticRecenter()
+            return
+        }
+        recenterRetryCount += 1
+        manager.requestLocation()
     }
 
     /// The app is fully usable by tapping, so nag about denied location once per denial,
@@ -151,57 +167,57 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
     /// Map tap / neighborhood picker. Does NOT touch the widget cache, and pins
     /// the selection so a later background GPS fix won't yank the user away.
     func selectByTap(lat: Double, lon: Double) {
+        cancelAutomaticRecenter()
         let coord = CLLocationCoordinate2D(latitude: lat, longitude: lon)
         guard let hit = PrecinctDB.shared.lookup(lon: lon, lat: lat) else {
             tap(0.4)   // soft "nothing here" cue
-            // A miss NEAR precincts is water or a boundary gap; only a genuinely
-            // out-of-coverage miss earns the coverage recital.
-            toast = PrecinctDB.shared.hasPrecincts(nearLon: lon, lat: lat)
-                ? "No precinct here. Try tapping on land."
-                : "No precincts here yet. Precinct covers \(Coverage.abbrList), with more coming."
+            toast = "No precinct here. Tap on land."
             return
         }
         let p = hit.profile
+        if p.state != selectedState {
+            tap(0.4)
+            toast = "Outside \(stateName(selectedState)). That's in \(stateName(p.state)). Switch states from the menu."
+            return
+        }
         selectionSource = .tap
         tap()
-        // A DB hit is always in a covered state, so just follow the tap there instead of refusing.
-        if p.state != selectedState, appStates.contains(where: { $0.abbr == p.state }) {
-            selectedState = p.state
-            toast = "Switched to \(stateName(p.state))."
-        }
         loadDetails(p, rings: hit.rings, at: coord)
-        maybeShowByNumbersTip()
     }
 
-    /// One-time discovery nudge: after a few deliberate taps, point at the page most
-    /// people never find on their own. Skipped whenever another toast is already up.
-    private func maybeShowByNumbersTip() {
-        sessionTapCount += 1
-        guard sessionTapCount >= 3, toast == nil,
-              !UserDefaults.standard.bool(forKey: "tippedByNumbers") else { return }
-        UserDefaults.standard.set(true, forKey: "tippedByNumbers")
-        toast = "By the Numbers ranks every precinct in the state. It's the chart button at the top right."
-    }
-
-    /// Select an exact precinct by id (from a leaderboard drill-in). Bypasses point-in-polygon so a
-    /// concave precinct whose bbox center sits outside itself still resolves to the right shape.
-    func selectByUnitID(_ unitID: String) {
-        guard let hit = PrecinctDB.shared.lookupByUnitID(unitID),
-              let bb = Self.boundingBox(of: hit.rings) else { return }
+    /// Address/place search is exploratory, like a map tap, but it can cross state lines.
+    /// It deliberately does not update the GPS-only widget cache.
+    @discardableResult
+    func selectBySearch(lat: Double, lon: Double) -> Bool {
+        cancelAutomaticRecenter()
+        let coord = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+        guard let hit = PrecinctDB.shared.lookup(lon: lon, lat: lat) else { return false }
         let p = hit.profile
+        selectedState = p.state
         selectionSource = .tap
         tap()
-        if p.state != selectedState, appStates.contains(where: { $0.abbr == p.state }) {
-            selectedState = p.state
-            toast = "Switched to \(stateName(p.state))."   // same feedback as a cross-state tap
-        }
+        loadDetails(p, rings: hit.rings, at: coord)
+        return true
+    }
+
+    /// Exact DB-row selection for ranked facts. Bounding-box centers can fall outside
+    /// concave precincts, so leaderboard navigation must not re-run point lookup.
+    @discardableResult
+    func selectByUnitID(_ unitID: String, fallbackLat: Double, fallbackLon: Double) -> Bool {
+        cancelAutomaticRecenter()
+        guard let hit = PrecinctDB.shared.precinct(unitID: unitID) else { return false }
+        let p = hit.profile
+        selectedState = p.state
+        selectionSource = .tap
+        tap()
         loadDetails(p, rings: hit.rings,
-                    at: CLLocationCoordinate2D(latitude: (bb.minLat + bb.maxLat) / 2,
-                                               longitude: (bb.minLon + bb.maxLon) / 2))
+                    at: CLLocationCoordinate2D(latitude: fallbackLat, longitude: fallbackLon))
+        return true
     }
 
     /// Switch the whole view to another state and land on its main city.
     func switchState(_ abbr: String) {
+        cancelAutomaticRecenter()
         guard let st = appStates.first(where: { $0.abbr == abbr }) else { return }
         selectedState = abbr
         selectionSource = .tap
@@ -217,18 +233,19 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
             // Worded so it's also true for covered-state users standing on water.
             if !warnedOutOfCoverage {
                 warnedOutOfCoverage = true
-                toast = "No precinct at your location yet. Precinct covers \(Coverage.abbrList), with more coming. Tap the map to look around."
+                toast = "No precinct at your location. Precinct covers NY, CA, MA, and TX. Tap the map to explore."
             }
+            retryAutomaticRecenterIfNeeded()
             return
         }
         let p = hit.profile
         ProfileStore.save(p)                       // widget always reflects where you ARE
         WidgetCenter.shared.reloadTimelines(ofKind: "PrecinctWidget")
         WidgetCenter.shared.reloadTimelines(ofKind: "PrecinctLockWidget")
-        if appStates.contains(where: { $0.abbr == p.state }) {
-            UserDefaults.standard.set(p.state, forKey: "lastGeoState")   // open here next launch, not Times Square
-        }
-        guard selectionSource != .tap else { return }  // don't interrupt active exploration
+        guard let generation = pendingRecenterGeneration,
+              generation == recenterGeneration else { return }
+        pendingRecenterGeneration = nil
+        recenterRetryCount = 0
         selectionSource = .gps
         if appStates.contains(where: { $0.abbr == p.state }) { selectedState = p.state }
         loadDetails(p, rings: hit.rings, at: coord)
@@ -236,16 +253,9 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
 
     private func loadDetails(_ p: PrecinctProfile, rings: [[CLLocationCoordinate2D]],
                              at coord: CLLocationCoordinate2D) {
-        // Fly the camera only when the selection actually changes (or a locate press asked).
-        // Bumping the serial on every load made each re-tap animate the camera for nothing.
-        let precinctChanged = p.unitID != selection?.unitID
         selection = p
         selectionCoord = coord
         selectedRings = rings
-        if precinctChanged || forceNextReframe {
-            forceNextReframe = false
-            selectionSerial &+= 1
-        }
         presidentTrend = PrecinctDB.shared.electionSeries(unitID: p.unitID)
             .filter { $0.office == "president" && $0.demShare != nil }
             .sorted { $0.year < $1.year }
@@ -263,25 +273,30 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
                 span: MKCoordinateSpan(latitudeDelta: spanLat,
                                        longitudeDelta: (bb.maxLon - bb.minLon) + padLon))
         }
+        // A successful explicit Locate/search/tap must move the camera even when it resolves to
+        // the precinct that was already selected. The unit ID alone does not change in that case.
+        selectionRevision &+= 1
         // Tint the whole surrounding county. Cached by county so panning/zooming within it
         // never reloads — only selecting a precinct in a *different* county refetches.
         let countyKey = "\(p.state)|\(p.borough)"   // county names repeat across states (Suffolk NY vs MA)
         if countyKey != loadedCounty {
             loadedCounty = countyKey
+            neighborPins = []
             // The whole county, dissolved into ≈5 lean regions (Solid Rep…Solid Dem) — a handful
             // of polygons instead of thousands, so the always-on county tint stays smooth even in
             // LA (~3,000 precincts). Decoded off-main below; newest county wins.
             let rows = PrecinctDB.shared.countyLeanRegions(state: p.state, county: p.borough)
-            Task.detached(priority: .userInitiated) { [weak self] in
-                let pins = PrecinctDB.makePins(rows)
+            let decodeTask = Task.detached(priority: .userInitiated) {
+                PrecinctDB.makePins(rows)
+            }
+            Task { @MainActor [weak self] in
+                let pins = await decodeTask.value
                 // Hold the tint until the zoom-to-precinct fly has settled. Rendering hundreds of
                 // polygons mid-animation makes both the fly and the tap feel laggy; this lets the
                 // sheet + selected shape paint instantly and the tint arrive a beat later.
                 try? await Task.sleep(nanoseconds: 280_000_000)
-                await MainActor.run { [weak self] in
-                    guard let self, self.loadedCounty == countyKey else { return }   // a newer county won the race
-                    self.neighborPins = pins
-                }
+                guard let self, self.loadedCounty == countyKey else { return }   // a newer county won the race
+                self.neighborPins = pins
             }
         }
     }
@@ -309,45 +324,73 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
         switch status {
         case .authorizedWhenInUse, .authorizedAlways:
             locationDenied = false
-            promptedThisSession = false
             UserDefaults.standard.set(false, forKey: "warnedLocationDenied")   // a later revoke warns once again
-            beginUpdates()
-        case .denied, .restricted:
-            myCoord = nil                    // don't leave a stale "you" pin
-            if promptedThisSession {
-                // The user just answered the system prompt; a modal here reads as asking
-                // again. Acknowledge quietly and mark this denial as warned.
-                promptedThisSession = false
-                UserDefaults.standard.set(true, forKey: "warnedLocationDenied")
-                toast = "Location is off. You can still tap anywhere on the map, or switch states from the menu at the top."
+            guard locationServiceStarted || explicitRecenterAfterAuthorization else { return }
+            if explicitRecenterAfterAuthorization {
+                explicitRecenterAfterAuthorization = false
+                didRequestInitialLocation = true
+                armAutomaticRecenter()
+                if m.accuracyAuthorization == .reducedAccuracy {
+                    requestPreciseLocation()
+                } else {
+                    m.requestLocation()
+                }
             } else {
-                noteDenied()
+                beginUpdates()
             }
+        case .denied, .restricted:
+            explicitRecenterAfterAuthorization = false
+            exhaustAutomaticRecenter()
+            didRequestInitialLocation = false
+            noteDenied()
+            myCoord = nil                    // don't leave a stale "you" pin
         default:
             break
         }
     }
     func locationManager(_ m: CLLocationManager, didUpdateLocations locs: [CLLocation]) {
         guard let loc = locs.last else { return }
+        locationUnknownRetryCount = 0
+        warnedLocationFailure = false
         // Precise Location off fuzzes fixes to 1-5 km; precincts are a few blocks wide, so a
         // fuzzed fix would confidently select the WRONG precinct. Ask once for temporary full
         // accuracy; if it stays reduced, keep the "you" pin but don't pretend to know the precinct.
         if m.accuracyAuthorization == .reducedAccuracy {
             myCoord = loc.coordinate
-            if !requestedFullAccuracy {
-                requestedFullAccuracy = true
-                m.requestTemporaryFullAccuracyAuthorization(withPurposeKey: "PrecinctLookup") { [weak self] _ in
-                    DispatchQueue.main.async {
-                        if m.accuracyAuthorization == .reducedAccuracy { self?.warnApproximate() }
-                        else { m.requestLocation() }   // precise granted: get a real fix
-                    }
-                }
-            } else {
-                warnApproximate()
-            }
+            if pendingRecenterGeneration != nil { requestPreciseLocation() }
             return
         }
+        let age = abs(loc.timestamp.timeIntervalSinceNow)
+        guard loc.horizontalAccuracy >= 0, loc.horizontalAccuracy <= 100, age <= 60 else {
+            myCoord = loc.coordinate
+            if !warnedInaccurate {
+                warnedInaccurate = true
+                toast = "Your location isn't precise enough to choose a precinct yet. Try again near a window, search an address, or tap the map."
+            }
+            retryAutomaticRecenterIfNeeded()
+            return
+        }
+        warnedInaccurate = false
         selectByGPS(loc.coordinate)
+    }
+
+    private func requestPreciseLocation() {
+        if !requestedFullAccuracy {
+            requestedFullAccuracy = true
+            manager.requestTemporaryFullAccuracyAuthorization(withPurposeKey: "PrecinctLookup") { [weak self] _ in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    if self.manager.accuracyAuthorization == .reducedAccuracy {
+                        self.warnApproximate()
+                        self.exhaustAutomaticRecenter()
+                    }
+                    else { self.manager.requestLocation() }
+                }
+            }
+        } else {
+            warnApproximate()
+            exhaustAutomaticRecenter()
+        }
     }
 
     private func warnApproximate() {
@@ -355,5 +398,30 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
         warnedApproximate = true
         toast = "Precise Location is off, so your exact precinct can't be found. Tap the map instead."
     }
-    func locationManager(_ m: CLLocationManager, didFailWithError error: Error) {}
+    func locationManager(_ m: CLLocationManager, didFailWithError error: Error) {
+        guard let locationError = error as? CLError else {
+            warnLocationFailure()
+            return
+        }
+        switch locationError.code {
+        case .locationUnknown where pendingRecenterGeneration != nil
+            && locationUnknownRetryCount < 1:
+            locationUnknownRetryCount += 1
+            m.requestLocation()
+        case .locationUnknown:
+            exhaustAutomaticRecenter()
+            warnLocationFailure()
+        case .denied:
+            exhaustAutomaticRecenter()
+            noteDenied()
+        default:
+            warnLocationFailure()
+        }
+    }
+
+    private func warnLocationFailure() {
+        guard !warnedLocationFailure else { return }
+        warnedLocationFailure = true
+        toast = "Your location isn't available right now. Try again, search an address, or tap the map."
+    }
 }

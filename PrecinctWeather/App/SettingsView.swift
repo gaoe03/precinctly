@@ -1,11 +1,12 @@
 import SwiftUI
 import PrecinctKit
 
-/// General app settings: map appearance, default state, version.
+/// General app settings: appearance, map look, default state, version.
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("appearanceMode") private var appearanceMode = "auto"
     @AppStorage("colorNeighbors") private var colorNeighbors = true
-    @AppStorage("leanTintIntensity") private var leanTintIntensity = 0.75   // "Medium"; Bold drowned the basemap
+    @AppStorage("leanTintIntensity") private var leanTintIntensity = 0.5   // soft; full strength drowns the basemap
     @AppStorage("defaultState") private var defaultState = "NY"
     @AppStorage("hapticsEnabled") private var hapticsEnabled = true
 
@@ -29,6 +30,10 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section("Appearance") {
+                    AppearanceModeRow(selection: $appearanceMode)
+                }
+
                 Section("Map") {
                     Toggle("Color nearby precincts", isOn: $colorNeighbors)
                     VStack(alignment: .leading, spacing: 6) {
@@ -69,6 +74,7 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    NavigationLink("Sources and licenses") { SourcesView() }
                     Link(destination: URL(string: "https://precinct.ethangao.xyz/privacy.html")!) {
                         LabeledContent("Privacy policy") { Image(systemName: "arrow.up.right").font(.footnote) }
                     }
@@ -76,7 +82,7 @@ struct SettingsView: View {
                 } header: {
                     Text("About")
                 } footer: {
-                    Text("Boundaries and returns are public data from the Census Bureau and state election offices, joined to the 2020 Census and American Community Survey. Your location is used only on your device and never leaves it.")
+                    Text("Boundaries, election returns, and demographics are combined from government and third-party sources; full notices are under Sources and licenses. Your location is used only on your device and never leaves it.")
                 }
             }
             .navigationTitle("Settings")
@@ -87,5 +93,51 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+}
+
+/// Three side-by-side tap targets (Light / Dark / Auto), not a menu: the choice is visible
+/// at a glance and one tap away. "auto" follows the system setting.
+private struct AppearanceModeRow: View {
+    @Binding var selection: String
+
+    private let options: [(id: String, label: String, icon: String)] = [
+        ("light", "Light", "sun.max.fill"),
+        ("dark", "Dark", "moon.fill"),
+        ("auto", "Auto", "circle.lefthalf.filled"),
+    ]
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ForEach(options, id: \.id) { option in
+                let selected = selection == option.id
+                Button {
+                    withAnimation(.easeOut(duration: 0.15)) { selection = option.id }
+                } label: {
+                    VStack(spacing: 6) {
+                        Image(systemName: option.icon)
+                            .font(.system(size: 19, weight: .medium))
+                        Text(option.label)
+                            .font(.footnote.weight(.semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 11)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(selected ? Color.accentColor.opacity(0.14) : Color(.tertiarySystemFill))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 1.5)
+                    )
+                    .foregroundStyle(selected ? Color.accentColor : Color.primary)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(option.label) appearance")
+                .accessibilityAddTraits(selected ? [.isButton, .isSelected] : [.isButton])
+            }
+        }
+        .padding(.vertical, 4)
     }
 }

@@ -4,6 +4,16 @@ options:
   deploymentTarget:
     iOS: "17.0"
   createIntermediateGroups: true
+schemes:
+  PrecinctKitTests:
+    build:
+      targets:
+        PrecinctKit: test
+        PrecinctKitTests: test
+    test:
+      config: Debug
+      targets:
+        - PrecinctKitTests
 settings:
   base:
     SWIFT_VERSION: "5.0"
@@ -26,8 +36,25 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.gaoe.PrecinctKit
         INFOPLIST_FILE: PrecinctKit/Info.plist
         DEFINES_MODULE: YES
-        SKIP_INSTALL: NO
+        SKIP_INSTALL: YES
+        TARGETED_DEVICE_FAMILY: "1"
     dependencies:
+      - sdk: libsqlite3.tbd
+
+  PrecinctKitTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - PrecinctKit/Tests
+      - App/SearchResolutionGate.swift
+      - Widget/WidgetLocationPolicy.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.gaoe.PrecinctKitTests
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "1"
+    dependencies:
+      - target: PrecinctKit
       - sdk: libsqlite3.tbd
 
   PrecinctWeather:
@@ -40,6 +67,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.gaoe.PrecinctWeather
         INFOPLIST_FILE: App/Info.plist
         CODE_SIGN_ENTITLEMENTS: App/App.entitlements
+        TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor   # slate ink; blue means Democrat, so don't default the chrome to system blue
     dependencies:
       - target: PrecinctKit
@@ -57,6 +85,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.gaoe.PrecinctWeather.Widget
         INFOPLIST_FILE: Widget/Info.plist
         CODE_SIGN_ENTITLEMENTS: Widget/Widget.entitlements
+        TARGETED_DEVICE_FAMILY: "1"
     dependencies:
       - target: PrecinctKit
         embed: false
