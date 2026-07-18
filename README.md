@@ -5,7 +5,7 @@ A native iOS app and home/lock-screen widget that shows the political lean and d
 Covers New York, California, Massachusetts, and Texas.
 
 <p align="center">
-  <img src="site/assets/hero_ca.jpg" width="240" alt="Precinct map, San Francisco (D +78)">
+  <img src="site/assets/hero_ca.jpg" width="240" alt="Precinct map, San Francisco (D +87)">
   <img src="site/assets/demo_map_hid.jpg" width="240" alt="Precinct map, Queens NY (R +10)">
   <img src="site/assets/demo_card_hid.png" width="240" alt="Precinct profile: voting trend, demographics, income">
 </p>

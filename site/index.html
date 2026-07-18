@@ -23,7 +23,7 @@ html{scroll-behavior:smooth}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:17px;line-height:1.5;-webkit-font-smoothing:antialiased;overflow-x:hidden}
 /* paper tooth: the same feTurbulence family as the pin's hand-drawn wobble, tiled as a
    whisper of grain so the page reads printed, not rendered */
-body,#widgets{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.06 0'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23g)'/%3E%3C/svg%3E")}
+body,.leanband{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.06 0'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23g)'/%3E%3C/svg%3E")}
 .wrap{max-width:var(--maxw);margin:0 auto;padding:0 var(--gut);position:relative}
 a{color:inherit}
 h1,h2,h3{margin:0;font-family:var(--serif);font-weight:600;letter-spacing:-.02em;line-height:1.04}
@@ -77,8 +77,8 @@ section{padding:94px 0;position:relative}
 .phone .scr{position:relative;width:100%;aspect-ratio:1206/2622;border-radius:38px;overflow:hidden;background:var(--bg-2)}
 .phone .scr img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .5s var(--ease)}
 .phone .scr img.on{opacity:1}
-.chips{display:flex;gap:8px}
-.chip{font-family:var(--sans);font-weight:600;font-size:13px;padding:10px 17px;border-radius:999px;min-height:40px;border:1px solid var(--hair);background:var(--card);color:var(--muted);cursor:pointer;transition:all .18s}
+.chips{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.chip{font-family:var(--sans);font-weight:600;font-size:13px;padding:10px 15px;border-radius:999px;min-height:40px;border:1px solid var(--hair);background:var(--card);color:var(--muted);cursor:pointer;transition:all .18s;white-space:nowrap}
 .chip:hover{color:var(--ink)}
 .chip:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
 .chip.on{background:var(--ink);color:#fff;border-color:var(--ink)}
@@ -329,14 +329,16 @@ footer{padding:50px 0 44px;border-top:1px solid var(--hair)}
   </div>
   <div class="stage rv" data-d="2">
     <div class="phone"><div class="scr">
-      <img data-s="ny" src="assets/hero_ny.jpg" alt="Precinct reading Borough Park, Brooklyn, New York, at R plus 91">
-      <img class="on" data-s="ca" src="assets/hero_ca.jpg" alt="Precinct reading San Francisco, California, at D plus 78">
+      <img data-s="ny" src="assets/hero_ny.jpg" alt="Precinct reading Borough Park, Brooklyn, New York, at R plus 97">
+      <img class="on" data-s="ca" src="assets/hero_ca.jpg" alt="Precinct reading San Francisco, California, at D plus 87">
       <img data-s="tx" src="assets/hero_tx.jpg" alt="Precinct reading Houston, Texas, at D plus 41">
+      <img data-s="ma" src="assets/hero_ma.jpg" alt="Precinct reading Jamaica Plain, Boston, Massachusetts, at D plus 92">
     </div></div>
     <div class="chips" aria-label="Switch precinct">
       <button class="chip" data-s="ny" aria-pressed="false">New York</button>
       <button class="chip on" data-s="ca" aria-pressed="true">California</button>
       <button class="chip" data-s="tx" aria-pressed="false">Texas</button>
+      <button class="chip" data-s="ma" aria-pressed="false">Massachusetts</button>
     </div>
     <p class="chip-gloss"><b style="color:var(--dem)">D+</b> leans Democratic, <b style="color:var(--rep)">R+</b> Republican.</p>
   </div>
@@ -427,7 +429,7 @@ footer{padding:50px 0 44px;border-top:1px solid var(--hair)}
       <tr><td>Massachusetts</td><td class="n cnum" data-to="2152">2,152</td><td class="n cnum" data-to="14">14</td></tr>
     </tbody></table></div>
     <div class="rv" data-d="1">
-      <p class="prov">All of it is public data: precinct boundaries from the Census Bureau and state election offices, joined to presidential returns and the 2020 Census and American Community Survey.</p>
+      <p class="prov">The app combines government records with third-party election and redistricting datasets. Full source, attribution, and license notices are listed inside the app.</p>
     </div>
   </div>
 </div></section>
