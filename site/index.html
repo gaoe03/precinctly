@@ -6,6 +6,19 @@
 <title>Precinctly: how your precinct voted, and who lives there</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <meta name="theme-color" content="#F4F7FA">
+<!-- Paste the public App Store URL here when it is live. This enables both download links
+     and Apple's Smart App Banner. TestFlight links enable the links but not the banner. -->
+<script>
+var APP_STORE_URL = '';
+(function(){
+  var match=APP_STORE_URL.match(/\/id(\d+)/);
+  if(!match)return;
+  var meta=document.createElement('meta');
+  meta.name='apple-itunes-app';
+  meta.content='app-id='+match[1];
+  document.head.appendChild(meta);
+})();
+</script>
 <style>
 :root{
   /* a faint cool paper (not pure white) so the long scroll reads as a map document; white cards
@@ -71,10 +84,9 @@ section{padding:94px 0;position:relative}
    "every neighborhood." nbsp chunk; scale with the viewport instead (38px at 430) */
 @media(max-width:430px){.hero h1{font-size:calc(10vw - 5px)}}
 .hero h1 em{font-style:italic;font-weight:500}
-.hero .eyebrow{display:block;margin-bottom:18px;color:var(--ink)}
 .hero .dek{font-family:var(--sans);font-size:clamp(17px,2vw,20px);color:var(--muted);max-width:33em;margin-top:22px;line-height:1.5}
-.hero-meta{display:flex;align-items:baseline;gap:18px;flex-wrap:wrap;margin-top:27px;font-family:var(--sans);font-size:13.5px;color:var(--muted)}
-.hero-meta .scope{padding-left:18px;border-left:1px solid var(--hair)}
+[data-app-store-link][hidden]{display:none}
+.store-link{display:inline-block;margin-top:27px;font-family:var(--sans);font-size:14px}
 .stage{display:flex;flex-direction:column;align-items:center;gap:16px}
 .phone{position:relative;width:300px;max-width:76vw;border-radius:46px;background:linear-gradient(150deg,#23262d,#121419);padding:9px;box-shadow:0 2px 2px rgba(255,255,255,.12) inset, 0 44px 70px -36px rgba(20,24,32,.6)}
 .phone .scr{position:relative;width:100%;aspect-ratio:1206/2622;border-radius:38px;overflow:hidden;background:var(--bg-2)}
@@ -199,7 +211,7 @@ section{padding:94px 0;position:relative}
 .close::before{content:"";position:absolute;inset:-20%;background-image:linear-gradient(rgba(255,255,255,.055) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.055) 1px,transparent 1px);background-size:56px 56px;transform:rotate(-4deg);pointer-events:none}
 .close .eyebrow{color:rgba(247,248,250,.62);display:block;margin-bottom:17px}
 .close p{font-family:var(--sans);font-size:18px;line-height:1.55;color:rgba(247,248,250,.68);max-width:42ch;margin-top:22px}
-.close .cl{margin-top:28px;font-family:var(--sans);font-size:14px}
+.close .cl{display:flex;gap:22px;flex-wrap:wrap;margin-top:28px;font-family:var(--sans);font-size:14px}
 .close .tlink{color:#F7F8FA;border-color:rgba(255,255,255,.28)}
 .close .tlink:hover{border-color:#F7F8FA}
 
@@ -226,7 +238,7 @@ footer{padding:50px 0 44px;border-top:1px solid var(--hair)}
   section{padding:60px 0}
   .demo-stage{height:1180px}
   .w-med{display:none}
-  .hero{padding-top:44px}.hero .eyebrow{margin-bottom:14px}.hero-meta{margin-top:24px}.hero-meta .scope{width:100%;padding:0;border:0}
+  .hero{padding-top:44px}
   .close{padding:76px 0}
 }
 
@@ -334,10 +346,9 @@ footer{padding:50px 0 44px;border-top:1px solid var(--hair)}
 <!-- HERO -->
 <section class="hero"><div class="wrap"><div class="hero-grid">
   <div>
-    <span class="eyebrow rv">Local politics, on your iPhone</span>
     <h1 class="rv" data-d="1">An election map for every&nbsp;neighborhood.</h1>
     <p class="dek rv" data-d="2">See how the precinct under your feet voted, who lives there, and how the vote has changed. Precinctly turns public election and Census records into a map you can carry.</p>
-    <div class="hero-meta rv" data-d="3"><a class="tlink" href="#demo">See how a precinct card works.</a><span class="scope">48,945 precincts across four states</span></div>
+    <a class="store-link tlink rv" data-d="3" data-app-store-link hidden>Download Precinctly from the App Store.</a>
   </div>
   <div class="stage rv" data-d="2">
     <div class="phone"><div class="scr">
@@ -450,7 +461,7 @@ footer{padding:50px 0 44px;border-top:1px solid var(--hair)}
   <span class="eyebrow rv">Built for iPhone</span>
   <h2 class="rv">There are 48,945 precincts in the app. <em>Find yours.</em></h2>
   <p class="rv">Precinctly is built from public data and runs without an account, ads, or analytics. The source is open for anyone who wants to inspect how the map was made.</p>
-  <div class="cl rv"><a class="tlink" href="https://github.com/gaoe03/precinctly">View the source on GitHub.</a></div>
+  <div class="cl rv"><a class="tlink" data-app-store-link hidden>Download from the App Store.</a><a class="tlink" href="https://github.com/gaoe03/precinctly">View the source on GitHub.</a></div>
 </div></section>
 </main>
 
@@ -468,6 +479,7 @@ footer{padding:50px 0 44px;border-top:1px solid var(--hair)}
 (function(){
   var RM = matchMedia('(prefers-reduced-motion:reduce)').matches;
   var isMobile = matchMedia('(max-width:860px)').matches;
+  if(APP_STORE_URL){ document.querySelectorAll('[data-app-store-link]').forEach(function(link){ link.href=APP_STORE_URL; link.hidden=false; }); }
   var STOPS=[[0,[217,41,41]],[.28,[181,52,122]],[.5,[140,64,179]],[.72,[79,84,207]],[1,[33,102,230]]];
   function leanColor(d){ if(d==null)return '#aeb4ac'; d=Math.max(0,Math.min(1,d));
     for(var i=1;i<STOPS.length;i++){ if(d<=STOPS[i][0]){ var a=STOPS[i-1],b=STOPS[i],f=(d-a[0])/(b[0]-a[0]);
