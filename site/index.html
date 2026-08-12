@@ -127,7 +127,9 @@ section{padding:94px 0;position:relative}
 .ticks{display:flex;justify-content:space-between;margin-top:22px;font-family:var(--sans);font-size:11.5px;color:var(--muted)}
 .ticks span:nth-child(1){color:var(--dem)}.ticks span:nth-child(5){color:var(--rep)}.ticks span:nth-child(3){color:var(--ink);font-weight:600}
 
-/* widgets: faithful to the app's home-screen widget, shown on light/dark home screens */
+/* widgets: faithful to the app's home-screen widget, shown on light/dark home screens.
+   Redrawn for 1.01: ledger rules, the five-election trajectory, the six-stat grid, and the
+   "Updated" line the medium widget gained. Geometry generated from PrecinctWidget.swift. */
 .wgrid{display:grid;grid-template-columns:1fr;gap:26px;align-items:start}
 .wgstage{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start}
 .wscreen{padding:22px;border-radius:30px;display:flex;gap:16px;align-items:center;box-shadow:0 1px 0 rgba(255,255,255,.4) inset, 0 24px 50px -30px rgba(20,24,32,.45)}
@@ -135,31 +137,56 @@ section{padding:94px 0;position:relative}
 .wcol{display:flex;flex-direction:column;align-items:center}
 .widget{position:relative;overflow:hidden;border-radius:22px;background:var(--paper);color:#15171C;box-shadow:0 1px 1px rgba(255,255,255,.45) inset, 0 10px 22px -10px rgba(20,24,32,.45);--paper:#EDEFEB;--wg:#D1D9CF;--wink:#293350;--wsec:#5B616B;--wchip:rgba(255,255,255,.62)}
 .widget>*{position:relative}
-.wrule{height:1px;background:var(--wg)}
-.w-home .wrule{margin:7px -14px}
+.wrule{flex:0 0 auto;height:1px;background:var(--wg)}
 .w-med .wrule{margin:6px -16px}
-.wleanrow{display:flex;align-items:center;gap:8px}
-.wleanrow .wshift{margin-top:0}
-.wfoot{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-top:7px}
-.wpin{flex:0 0 auto}
-.wname{font-family:var(--serif);font-weight:600;font-size:13px;line-height:1.08;white-space:nowrap}
-.wsub{font-family:var(--sans);font-size:9.5px;color:var(--wsec);margin-top:1px;white-space:nowrap}
-.wlean{font-family:var(--serif);font-weight:700;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums;color:var(--dem)}
-.wshift{font-family:var(--sans);font-size:9.5px;color:var(--wsec);margin-top:3px}
-.wbar{height:8px;border-radius:8px;display:flex;overflow:hidden;border:1.2px solid var(--wink);margin-top:7px}
-.wchip{border-radius:8px;background:var(--wchip);border:1px solid color-mix(in srgb,var(--wink) 38%,transparent);display:flex;align-items:center;justify-content:center;flex:0 0 auto}
-.w-home{width:165px;height:165px;padding:14px;display:flex;flex-direction:column}
-.w-home .whead{display:flex;justify-content:space-between;align-items:flex-start;gap:6px}
-.w-home .wlean{font-size:29px}
-.w-home .wrace{font-family:var(--sans);font-size:10.5px;font-weight:600}
-.w-med{width:348px;height:165px;padding:15px 16px;display:flex;gap:13px}
-.w-med .wleft{flex:1;display:flex;flex-direction:column;min-width:0}
-.w-med .whead{display:flex;align-items:flex-start;gap:7px}
-.w-med .wlean{font-size:31px}
-.w-med .wbar{width:134px}
-.w-med .wstats{display:grid;grid-template-columns:1fr 1fr;gap:4px 14px;align-content:center;flex:0 0 auto}
-.w-med .wstats .v{font-family:var(--serif);font-weight:660;font-size:13.5px;line-height:1;font-variant-numeric:tabular-nums}
-.w-med .wstats .k{font-family:var(--sans);font-size:9px;color:var(--wsec);margin-top:2px;white-space:nowrap}
+
+/* shared parts */
+.w-place{flex:0 0 auto;font-family:var(--sans);font-weight:600;font-size:9.5px;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wleanrow{flex:0 0 auto;display:flex;align-items:baseline;gap:5px}
+.wlean{font-family:var(--serif);font-weight:700;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums;color:var(--mid)}
+.wleanlabel{font-family:var(--sans);font-weight:600;font-size:8.5px;color:var(--mid)}
+.wbar{flex:0 0 auto;height:5px;border-radius:5px;display:flex;overflow:hidden;border:1px solid var(--wink);margin-top:4px}
+.wbar .bd{background:var(--dem);width:45%}
+.wbar .br{background:var(--rep);flex:1}
+.wsplit{flex:0 0 auto;display:flex;justify-content:space-between;align-items:baseline;gap:4px;font-family:var(--sans);font-weight:600;font-size:8px;margin-top:2px}
+.wsplit .cd{color:var(--dem)}
+.wsplit .cr{color:var(--rep)}
+.wsplit .cs{color:var(--wsec);font-weight:400}
+
+/* the presidential trajectory: bars hang off a dashed 50% axis, years underneath */
+.wtraj{position:relative;flex:0 0 auto}
+.wtraj .axis{position:absolute;left:0;right:0;border-top:1px dashed var(--wg)}
+.wtraj .tb{position:absolute;transform:translateX(-50%);border-radius:2px}
+.wtraj .ty{position:absolute;bottom:-1px;transform:translateX(-50%);font-family:var(--sans);font-style:normal;font-size:8px;color:var(--wsec)}
+
+/* stat cells */
+.wgrid2c{flex:0 0 auto;display:grid;grid-template-columns:1fr 1fr;gap:3px 8px}
+.wcell{min-width:0}
+.wcell .v{font-family:var(--serif);font-weight:660;line-height:1.05;font-size:11.5px;font-variant-numeric:tabular-nums}
+.wcell .k{font-family:var(--sans);font-size:7.5px;color:var(--wsec);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.w-home{width:165px;height:165px;padding:10px 13px 9px;display:flex;flex-direction:column}
+.w-home .wlean{font-size:23px}
+.w-home .wrule{margin:3px -13px}
+.w-home .wcell .v{font-size:11px}
+.w-home .wcell .k{font-size:7px}
+
+.w-med{width:348px;height:165px;padding:14px 16px;display:flex;flex-direction:column}
+.w-med .whead{display:flex;align-items:baseline;gap:6px}
+.w-med .wname{font-family:var(--sans);font-weight:600;font-size:11px;white-space:nowrap}
+.w-med .wcounty{font-family:var(--sans);font-size:9.5px;color:var(--wsec);white-space:nowrap}
+.w-med .wturn{margin-left:auto;font-family:var(--sans);font-size:8.5px;color:var(--wsec);white-space:nowrap}
+.w-med .wbody{display:flex;gap:14px;flex:1;min-height:0}
+.w-med .wleft{width:148px;display:flex;flex-direction:column;min-width:0}
+.w-med .wlean{font-size:33px}
+.w-med .wlabel2{margin-top:1px}
+.w-med .wright{flex:1;display:flex;flex-direction:column;min-width:0}
+.w-med .wcell .v{font-size:13px}
+.w-med .wcell .k{font-size:8px}
+.w-med .wgrid6{gap:5px 9px}
+.w-med .wmeta{display:flex;justify-content:space-between;align-items:baseline;gap:6px;margin-top:auto;font-family:var(--sans);font-size:8.5px;color:var(--wsec)}
+.w-med .wupd{opacity:.62}
+
 .wspec{font-family:var(--sans);font-size:15.5px;color:var(--muted);line-height:1.7;max-width:40ch}
 .wspec b{color:var(--ink);font-weight:600}
 
@@ -285,7 +312,7 @@ footer{padding:50px 0 44px;border-top:1px solid var(--hair)}
 /* reduced motion: no scroll-jack either, so show the whole page in one tall phone */
 @media(prefers-reduced-motion:reduce){
   .numtrack{height:auto}.numsticky{position:static;min-height:0;display:block}
-  .scr.bnscroll{aspect-ratio:1206/5683}.scr.bnscroll img{position:static;transform:none!important}}
+  .scr.bnscroll{aspect-ratio:1206/5673}.scr.bnscroll img{position:static;transform:none!important}}
 @media(max-width:860px){
   /* THE READ on mobile: the BIG phone scrolls up and pins as the card opens to 100%; then it releases
      and the notes pop up one after another below it and STAY (cumulative). Needn't all fit at once. */
@@ -408,17 +435,7 @@ footer{padding:50px 0 44px;border-top:1px solid var(--hair)}
   </div>
   <div class="wgrid2 rv">
     <div class="wcol"><div class="wscreen" id="wscreen">
-      <div class="widget w-home">
-        <div class="whead">
-          <div><div class="wname">AD 75 ED 14</div><div class="wsub">Manhattan, NY</div></div>
-          <div class="wchip" style="width:34px;height:34px"><svg width="26" height="26" viewBox="0 0 100 100" aria-hidden="true"><polygon points="0.0,41.4 13.8,22.4 100.0,58.7 86.0,77.6 0.0,41.4" fill="rgba(55,94,219,.22)" stroke="var(--dem)" stroke-width="4" stroke-linejoin="round"/></svg></div>
-        </div>
-        <div class="wrule"></div>
-        <div class="wleanrow"><span class="wlean">D+49</span><span class="wshift">D+6 since 2016</span></div>
-        <div class="wrule"></div>
-        <div class="wbar" style="margin-top:0"><span style="background:var(--dem);width:74%"></span><span style="background:var(--rep);width:26%"></span></div>
-        <div class="wfoot"><span class="wrace">64% White</span><span class="wsub">$89k income</span></div>
-      </div>
+      <div class="widget w-home"><div class="w-place">Precinct 1322, Queens NY</div><div class="wrule"></div><div class="wleanrow"><span class="wlean">R+10</span><span class="wleanlabel">Lean Rep</span></div><div class="wbar"><span class="bd"></span><span class="br"></span></div><div class="wsplit"><span class="cd">45% D</span><span class="cs">26% turnout</span><span class="cr">55% R</span></div><div class="wtraj" style="height:26px"><i class="axis" style="top:44.67%"></i><i class="tb" style="left:10.00%;top:17.81%;height:26.86%;width:11.0%;background:var(--dem)"></i><i class="ty" style="left:10.00%">08</i><i class="tb" style="left:30.00%;top:12.16%;height:32.51%;width:11.0%;background:var(--dem)"></i><i class="ty" style="left:30.00%">12</i><i class="tb" style="left:50.00%;top:15.93%;height:28.74%;width:11.0%;background:var(--dem)"></i><i class="ty" style="left:50.00%">16</i><i class="tb" style="left:70.00%;top:27.71%;height:16.96%;width:11.0%;background:var(--pb)"></i><i class="ty" style="left:70.00%">20</i><i class="tb" style="left:90.00%;top:44.67%;height:6.15%;width:11.0%;background:var(--mid)"></i><i class="ty" style="left:90.00%">24</i></div><div class="wrule"></div><div class="wgrid2c"><div class="wcell"><div class="v">$38k</div><div class="k">Income vs Queens</div></div><div class="wcell"><div class="v">10%</div><div class="k">College</div></div><div class="wcell"><div class="v">35</div><div class="k">Median age</div></div><div class="wcell"><div class="v">81%</div><div class="k">Renters</div></div></div></div>
       <div class="widget w-med" id="wmedLight"></div>
     </div></div>
     <div class="wtext">
@@ -594,22 +611,7 @@ footer{padding:50px 0 44px;border-top:1px solid var(--hair)}
   }
 
   /* build widget medium */
-  function wcell(v,k){ return '<div><div class="v">'+v+'</div><div class="k">'+k+'</div></div>'; }
-  function medHTML(){ return ''+
-    '<div style="display:flex;flex-direction:column;min-width:0;width:100%">'+
-      '<div class="whead">'+
-        '<div style="min-width:0"><div class="wname">AD 75 ED 14</div><div class="wsub">Manhattan, NY</div></div>'+
-        '<div class="wchip" style="width:32px;height:32px;margin-left:auto"><svg width="24" height="24" viewBox="0 0 100 100" aria-hidden="true"><polygon points="0.0,41.4 13.8,22.4 100.0,58.7 86.0,77.6 0.0,41.4" fill="rgba(55,94,219,.22)" stroke="var(--dem)" stroke-width="4" stroke-linejoin="round"/></svg></div>'+
-      '</div>'+
-      '<div class="wrule"></div>'+
-      '<div style="display:flex;gap:13px;flex:1;min-width:0">'+
-        '<div class="wleft">'+
-          '<div class="wleanrow"><span class="wlean">D+49</span><span class="wshift">D+6 since 2016</span></div>'+
-          '<div class="wbar" style="margin-top:auto;width:134px"><span style="background:var(--dem);width:74%"></span><span style="background:var(--rep);width:26%"></span></div>'+
-        '</div>'+
-        '<div class="wstats">'+wcell('64%','White')+wcell('$89k','Income')+wcell('61%','College')+wcell('38','Median age')+wcell('82%','Renters')+wcell('5.1k','People')+'</div>'+
-      '</div>'+
-    '</div>'; }
+  function medHTML(){ return "<div class=\"whead\"><span class=\"wname\">Precinct 1322</span><span class=\"wcounty\">Queens, NY</span><span class=\"wturn\">26% turnout from 388 votes</span></div><div class=\"wrule\"></div><div class=\"wbody\"><div class=\"wleft\"><div class=\"wlean\">R+10</div><div class=\"wleanlabel wlabel2\">Lean Rep in 2024</div><div class=\"wbar\"><span class=\"bd\"></span><span class=\"br\"></span></div><div class=\"wsplit\"><span class=\"cd\">45% Dem</span><span class=\"cr\">55% Rep</span></div><div class=\"wtraj\" style=\"height:34px;margin-top:auto\"><i class=\"axis\" style=\"top:53.01%\"></i><i class=\"tb\" style=\"left:10.00%;top:18.78%;height:34.23%;width:11.0%;background:var(--dem)\"></i><i class=\"ty\" style=\"left:10.00%\">08</i><i class=\"tb\" style=\"left:30.00%;top:11.57%;height:41.43%;width:11.0%;background:var(--dem)\"></i><i class=\"ty\" style=\"left:30.00%\">12</i><i class=\"tb\" style=\"left:50.00%;top:16.38%;height:36.63%;width:11.0%;background:var(--dem)\"></i><i class=\"ty\" style=\"left:50.00%\">16</i><i class=\"tb\" style=\"left:70.00%;top:31.39%;height:21.62%;width:11.0%;background:var(--pb)\"></i><i class=\"ty\" style=\"left:70.00%\">20</i><i class=\"tb\" style=\"left:90.00%;top:53.01%;height:6.00%;width:11.0%;background:var(--mid)\"></i><i class=\"ty\" style=\"left:90.00%\">24</i></div></div><div class=\"wright\"><div class=\"wgrid2c wgrid6\"><div class=\"wcell\"><div class=\"v\">$38k</div><div class=\"k\">Income vs Queens</div></div><div class=\"wcell\"><div class=\"v\">10%</div><div class=\"k\">College</div></div><div class=\"wcell\"><div class=\"v\">35</div><div class=\"k\">Median age</div></div><div class=\"wcell\"><div class=\"v\">81%</div><div class=\"k\">Renters</div></div><div class=\"wcell\"><div class=\"v\">3k</div><div class=\"k\">People</div></div><div class=\"wcell\"><div class=\"v\">64k/mi\u00b2</div><div class=\"k\">Density</div></div></div><div class=\"wmeta\"><span>81% Hispanic</span><span class=\"wupd\">Updated just now</span></div></div></div>"; }
   document.getElementById('wmedLight').innerHTML=medHTML();
 
   /* reveal */
