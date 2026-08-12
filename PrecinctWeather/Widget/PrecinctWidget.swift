@@ -14,6 +14,17 @@ struct PrecinctEntry: TimelineEntry {
     let shiftPts: Int?                       // presidential margin shift, earliest→latest (+ = toward Dem)
     let shiftSinceYear: Int?                 // the earliest year in that span (usually 2016)
     var outOfCoverage = false                // had a fix, but it fell outside NY/CA/MA/TX
+    /// When the data was actually read. `date` is when WidgetKit should *render* this entry, and
+    /// one fetch fans out into several render times, so the two differ. Their gap is the age the
+    /// widget reports.
+    var fetchedAt = Date()
+
+    /// The same reading, scheduled to draw at a later moment.
+    func rendered(at d: Date) -> PrecinctEntry {
+        PrecinctEntry(date: d, profile: profile, trend: trend, baseline: baseline,
+                      shiftPts: shiftPts, shiftSinceYear: shiftSinceYear,
+                      outOfCoverage: outOfCoverage, fetchedAt: fetchedAt)
+    }
 
     static func empty(outOfCoverage: Bool = false) -> PrecinctEntry {
         PrecinctEntry(date: Date(), profile: nil, trend: [], baseline: nil,
@@ -40,7 +51,15 @@ struct PrecinctProvider: TimelineProvider {
             // Hourly backstop only — the real trigger is NSWidgetWantsLocation (reloads when you
             // move). Data is static per precinct, so a tighter timer would just waste the daily
             // reload budget (WidgetKit allots ~40–70/day, shared with the location reloads).
-            completion(Timeline(entries: [e], policy: .after(Date().addingTimeInterval(60 * 60))))
+            //
+            // One fetch, several render times, so the "Updated 5m ago" line climbs on its own
+            // between reloads. Extra ENTRIES in a single timeline are free — only the reload
+            // costs budget — which is why this beats WidgetKit's self-updating `.relative` text
+            // style, whose output reads "3 min, 44 sec ago" rather than "3m ago".
+            let steps: [TimeInterval] = [0, 120, 300, 600, 1200, 1800, 2700]
+            let entries = steps.map { e.rendered(at: e.fetchedAt.addingTimeInterval($0)) }
+            completion(Timeline(entries: entries,
+                                policy: .after(e.fetchedAt.addingTimeInterval(60 * 60))))
         }
     }
     /// One-shot location for the widget. Async CLLocationUpdate instead of a delegate:
@@ -151,6 +170,27 @@ struct PrecinctHomeView: View {
 
     private func placeLine(_ p: PrecinctProfile) -> String {
         "\(precinctHeadline(p)), \(countyDisplay(p.borough)) \(p.state)"
+    }
+
+    /// When this entry was built. A location widget can sit on a stale precinct if the last
+    /// reload was hours ago, so medium and large say how long ago they looked. Small has no room.
+    ///
+    /// Elapsed time rather than a clock reading: it answers "is this still true where I am?"
+    /// without any time-zone reasoning. The provider schedules several render times off one
+    /// fetch, so this climbs between reloads even though each string is fixed when drawn.
+    private func agoText(_ e: PrecinctEntry) -> String {
+        let s = max(0, Int(e.date.timeIntervalSince(e.fetchedAt)))
+        if s < 60 { return "Updated just now" }
+        if s < 3600 { return "Updated \(s / 60)m ago" }
+        return "Updated \(s / 3600)h ago"
+    }
+
+    private func updatedView(_ e: PrecinctEntry, size: CGFloat) -> some View {
+        Text(agoText(e))
+            .font(.system(size: size))
+            .foregroundStyle(.tertiary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
     }
 
     /// Every reading the layouts draw from, widest first. One list so small, medium and large
@@ -271,10 +311,16 @@ struct PrecinctHomeView: View {
                 .frame(width: 148)
                 VStack(alignment: .leading, spacing: 6) {
                     statGrid(p, e, count: 6, columns: 2, valueSize: 13, labelSize: 8.5, spacing: 7)
-                    if let top = p.raceBreakdown.first {
-                        Text("\(pctStr(top.value)) \(top.label)")
-                            .font(.system(size: 8.5)).foregroundStyle(.secondary)
-                            .lineLimit(1).minimumScaleFactor(0.7)
+                    // Shares the race line's row rather than taking one of its own: medium has no
+                    // vertical slack left once the trajectory is in.
+                    HStack(spacing: 4) {
+                        if let top = p.raceBreakdown.first {
+                            Text("\(pctStr(top.value)) \(top.label)")
+                                .font(.system(size: 8.5)).foregroundStyle(.secondary)
+                                .lineLimit(1).minimumScaleFactor(0.7)
+                        }
+                        Spacer(minLength: 4)
+                        updatedView(e, size: 8)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -296,10 +342,16 @@ struct PrecinctHomeView: View {
     private func large(_ p: PrecinctProfile, _ e: PrecinctEntry) -> some View {
         let lean = WidgetColor.lean(p.leanDemShare)
         return VStack(alignment: .leading, spacing: 0) {
-            Text(precinctHeadline(p)).font(.system(size: 13, weight: .semibold))
-                .lineLimit(1).minimumScaleFactor(0.7)
-            Text("\(countyDisplay(p.borough)), \(p.state)").font(.system(size: 10.5))
-                .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
+            HStack(alignment: .lastTextBaseline, spacing: 8) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(precinctHeadline(p)).font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                    Text("\(countyDisplay(p.borough)), \(p.state)").font(.system(size: 10.5))
+                        .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
+                }
+                Spacer(minLength: 6)
+                updatedView(e, size: 9)
+            }
             ledgerRule().padding(.vertical, 8)
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(p.leanShort).font(.system(size: 40, weight: .heavy, design: .serif))
