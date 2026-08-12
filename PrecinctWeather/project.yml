@@ -57,7 +57,7 @@ targets:
     platform: iOS
     sources:
       - PrecinctKit/Tests
-      - App/SearchResolutionGate.swift
+      - App/Support/SearchResolutionGate.swift
       - Widget/WidgetLocationPolicy.swift
     settings:
       base:

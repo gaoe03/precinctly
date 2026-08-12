@@ -30,7 +30,7 @@ from shapely.ops import transform as shp_transform
 from shapely.validation import make_valid
 from pyproj import Transformer
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "precincts_2026_primary.db")
 DATA_DIR = os.path.join(ROOT, "public_data")
 

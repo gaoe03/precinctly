@@ -19,7 +19,7 @@ import zipfile
 import shapefile  # pyshp
 from shapely.geometry import shape as shapely_shape
 
-DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "public_data")
+DATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "public_data")
 SQM_PER_SQMI = 2589988.110336
 INCOME_TOPCODE = 250001
 JAM_NEG = -666666666

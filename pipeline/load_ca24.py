@@ -61,7 +61,7 @@ def _shape_to_geom(shape):
             geom = geom.difference(h)
     return geom if not geom.is_empty else None
 
-DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "public_data", "2024")
+DATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "public_data", "2024")
 CA_FIPS = "06"
 
 # PL94 segment-1 field indices (0-based): 5 header + P1(71) + P2(73).

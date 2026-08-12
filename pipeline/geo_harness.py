@@ -19,7 +19,7 @@ from shapely import wkb as shp_wkb
 from shapely.geometry import Point
 
 # The app ships this bundled copy.
-DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "PrecinctWeather/PrecinctKit/Resources/nyc_precincts.sqlite")
+DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "PrecinctWeather/PrecinctKit/Resources/nyc_precincts.sqlite")
 REVIEWED_SHAPELY_VERSION = "2.1.2"
 REVIEWED_OVERLAP_REDIRECT_COUNT = 30
 REVIEWED_OVERLAP_REDIRECT_SHA256 = "7b6ee8edcf3c64ffca0a9be49a6067c8895bf1925ee13614c059aded96faf2cc"

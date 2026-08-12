@@ -9,7 +9,7 @@ import sqlite3
 import sys
 from shapely import wkb
 
-DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "PrecinctWeather/PrecinctKit/Resources/nyc_precincts.sqlite")
+DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "PrecinctWeather/PrecinctKit/Resources/nyc_precincts.sqlite")
 US = dict(min_lon=-125.0, max_lon=-66.0, min_lat=24.0, max_lat=50.0)
 
 state = sys.argv[1] if len(sys.argv) > 1 else "CA"

@@ -22,7 +22,7 @@ from load_vtd import (_read_acs_table, _median_from_hist,
                       _EDU_NO_HS, _EDU_HS, _EDU_BACH, _EDU_GRAD, INCOME_TOPCODE)
 from load_ca24 import _shape_to_geom, _P1_TOTAL, _P2
 
-DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "public_data", "2024")
+DATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "public_data", "2024")
 
 # Per-state: precinct shapefile (no ext), id field, (Dem,Rep) result fields, FIPS, PL94 prefix.
 STATES = {
