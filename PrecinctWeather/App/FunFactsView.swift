@@ -327,6 +327,12 @@ private struct SeeAllChip: View {
             Image(systemName: "chevron.right")
         }
         .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+        // Holds its width, exactly like the value above it. Without this the chip is the only
+        // thing in the row that can give, so a long place name ("San Bernardino County, CA
+        // (UNI1555)") squeezed it until it wrapped mid-word into "Se / e / all". The place
+        // name truncates instead, which it is already set up to do.
+        .lineLimit(1)
+        .fixedSize()
         .padding(.horizontal, 8).padding(.vertical, 3)
         .background(Color(.tertiarySystemFill), in: Capsule())
     }

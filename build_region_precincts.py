@@ -125,7 +125,7 @@ CREATE TABLE precinct_elections (
 CREATE INDEX idx_pe_unit ON precinct_elections(unit_id);
 
 CREATE TABLE baselines (
-  scope TEXT PRIMARY KEY, pop_total INT,
+  scope TEXT PRIMARY KEY, precinct_count INT, pop_total INT,
   pct_white REAL, pct_black REAL, pct_hispanic REAL, pct_asian REAL,
   pct_native REAL, pct_pacific REAL, pct_other REAL,
   pct_ba_or_higher REAL, income_median INT, pct_renter REAL, avg_age REAL,
@@ -149,8 +149,28 @@ PRECINCT_COLS = [
 ]
 
 
+# Cities that span several counties, so "vs New York City" cannot come from a county row.
+# Mirrored in apply_area_baselines.py (METROS) and Metro.nycBoroughs in PrecinctProfile.swift.
+METROS = {
+    ("NY", "New York City"): {"Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"},
+}
+
+
+def scope_keys(state, county):
+    """Every baseline row a precinct contributes to. Key format is read by the app:
+    a bare state abbreviation, "county|NY|Brooklyn", "metro|NY|New York City"."""
+    keys = [state]
+    if county:
+        keys.append(f"county|{state}|{county}")
+        for (mstate, mname), counties in METROS.items():
+            if state == mstate and county in counties:
+                keys.append(f"metro|{state}|{mname}")
+    return keys
+
+
 class Baseline:
     def __init__(self):
+        self.precincts = 0
         self.pop = 0
         self.race = defaultdict(float)
         self.ba = 0.0; self.edu_total = 0.0
@@ -162,7 +182,7 @@ class Baseline:
     def finish(self, scope):
         def frac(n, d): return (n / d) if d else None
         return {
-            "scope": scope, "pop_total": int(self.pop),
+            "scope": scope, "precinct_count": self.precincts, "pop_total": int(self.pop),
             "pct_white": frac(self.race["pop_white"], self.pop),
             "pct_black": frac(self.race["pop_black"], self.pop),
             "pct_hispanic": frac(self.race["pop_hispanic"], self.pop),
@@ -461,21 +481,26 @@ def build(records, out_path):
             "data_complete": 1 if (has_pres and has_demo) else 0,
         })
 
-        b = bases[state_abbr]
-        if has_demo:
-            b.pop += pop_total
-            for v in RACE_VARS:
-                if race_counts[v] is not None:
-                    b.race[v] += race_counts[v]
-            if edu_total:
-                b.ba += ba_grad or 0; b.edu_total += edu_total
-            b.owner += owner or 0; b.renter += renter or 0
-            if income is not None and households:
-                b.income_num += income * households; b.income_den += households
-            if avg_age is not None:
-                b.age_num += avg_age * pop_total; b.age_den += pop_total
-        if dL is not None: b.dem24 += dL
-        if rL is not None: b.rep24 += rL
+        # One row per area the app can compare a precinct against: its state, its county, and
+        # the city where a city spans several counties. The app picks between them at read time
+        # (see ComparisonArea in PrecinctProfile.swift); dropping the extra scopes here would
+        # silently remove that feature on the next rebuild.
+        for b in (bases[k] for k in scope_keys(state_abbr, borough)):
+            b.precincts += 1
+            if has_demo:
+                b.pop += pop_total
+                for v in RACE_VARS:
+                    if race_counts[v] is not None:
+                        b.race[v] += race_counts[v]
+                if edu_total:
+                    b.ba += ba_grad or 0; b.edu_total += edu_total
+                b.owner += owner or 0; b.renter += renter or 0
+                if income is not None and households:
+                    b.income_num += income * households; b.income_den += households
+                if avg_age is not None:
+                    b.age_num += avg_age * pop_total; b.age_den += pop_total
+            if dL is not None: b.dem24 += dL
+            if rL is not None: b.rep24 += rL
 
     print(f"Built records: {len(out_records)}   election rows: {len(election_rows)}")
     print(f"Skipped(no geom): {skipped_no_geom}   dropped(empty): {skipped_empty}   missing pres24: {n_no_pres}   missing demo: {n_no_demo}")
@@ -496,7 +521,7 @@ def build(records, out_path):
     out.executemany(
         "INSERT INTO precinct_elections (unit_id, office, year, dem, rep, other, dem_share) "
         "VALUES (?,?,?,?,?,?,?)", election_rows)
-    base_cols = ["scope", "pop_total", "pct_white", "pct_black", "pct_hispanic",
+    base_cols = ["scope", "precinct_count", "pop_total", "pct_white", "pct_black", "pct_hispanic",
                  "pct_asian", "pct_native", "pct_pacific", "pct_other",
                  "pct_ba_or_higher", "income_median", "pct_renter", "avg_age", "pres24_dem_share"]
     out.executemany(

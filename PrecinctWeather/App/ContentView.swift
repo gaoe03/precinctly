@@ -204,11 +204,17 @@ struct ContentView: View {
         .accessibilityLabel(a11y)
     }
 
+    // One chrome for every floating map control. They used to be three different treatments on
+    // one screen: a radius-12 regularMaterial rectangle for search and the action pair, a
+    // thickMaterial capsule with a hairline for the state menu, and two different shadows. Same
+    // reason the state pill went near-opaque applies to all of them: a thin material picks up
+    // whatever lean color sits under it and reads muddy and borderless over a saturated county.
     private func controlChrome<V: View>(_ content: V) -> some View {
         content
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .shadow(radius: 3)
+            .background(.thickMaterial, in: Capsule())
+            .clipShape(Capsule())
+            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.12)))
+            .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
     }
 
     private var searchControl: some View {
@@ -269,17 +275,16 @@ struct ContentView: View {
             Divider()
             Button("More states soon") {}.disabled(true)
         } label: {
-            HStack(spacing: 4) {
-                Text(stateName(model.selectedState)).font(.subheadline.weight(.semibold))
-                    .lineLimit(1).minimumScaleFactor(0.7)
-                Image(systemName: "chevron.down").font(.caption2)
-            }
-            .padding(.horizontal, 14).padding(.vertical, 8)
-            // Near-opaque with a hairline: the frosted material picked up whatever lean color
-            // sat under it and read muddy and borderless over a saturated county.
-            .background(.thickMaterial, in: Capsule())
-            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.12)))
-            .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
+            controlChrome(
+                HStack(spacing: 4) {
+                    Text(stateName(model.selectedState)).font(.subheadline.weight(.semibold))
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                    Image(systemName: "chevron.down").font(.caption2)
+                }
+                .padding(.horizontal, 16)
+                // Matches the 44pt icon controls so the whole top row sits on one line.
+                .frame(height: 44)
+            )
         }
         .accessibilityLabel("Switch state, currently \(stateName(model.selectedState))")
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)

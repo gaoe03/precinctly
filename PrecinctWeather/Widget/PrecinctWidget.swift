@@ -9,21 +9,29 @@ import PrecinctKit
 struct PrecinctEntry: TimelineEntry {
     let date: Date
     let profile: PrecinctProfile?
-    let rings: [[CLLocationCoordinate2D]]   // the precinct's shape, for the mini-map chip
+    let trend: [ElectionResult]              // presidential Dem share by year, for the trajectory
+    let baseline: Baseline?                  // the area the stats are measured against
     let shiftPts: Int?                       // presidential margin shift, earliest→latest (+ = toward Dem)
     let shiftSinceYear: Int?                 // the earliest year in that span (usually 2016)
     var outOfCoverage = false                // had a fix, but it fell outside NY/CA/MA/TX
+
+    static func empty(outOfCoverage: Bool = false) -> PrecinctEntry {
+        PrecinctEntry(date: Date(), profile: nil, trend: [], baseline: nil,
+                      shiftPts: nil, shiftSinceYear: nil, outOfCoverage: outOfCoverage)
+    }
+    static var sample: PrecinctEntry {
+        PrecinctEntry(date: Date(), profile: .sample, trend: [], baseline: nil,
+                      shiftPts: nil, shiftSinceYear: nil)
+    }
 }
 
 /// `NSWidgetWantsLocation` grants location access while the app is authorized, so the widget
 /// resolves the current precinct straight from the bundled DB. No App Group required
 /// (that needs a paid account). Coordinates stay on device.
 struct PrecinctProvider: TimelineProvider {
-    func placeholder(in context: Context) -> PrecinctEntry {
-        PrecinctEntry(date: Date(), profile: .sample, rings: [], shiftPts: nil, shiftSinceYear: nil)
-    }
+    func placeholder(in context: Context) -> PrecinctEntry { .sample }
     func getSnapshot(in context: Context, completion: @escaping (PrecinctEntry) -> Void) {
-        let sample = PrecinctEntry(date: Date(), profile: .sample, rings: [], shiftPts: nil, shiftSinceYear: nil)
+        let sample = PrecinctEntry.sample
         if context.isPreview { completion(sample); return }
         resolve { e in completion(e.profile == nil ? sample : e) }
     }
@@ -70,32 +78,32 @@ struct PrecinctProvider: TimelineProvider {
         Task {
             let loc = await currentLocation()
             let profile: PrecinctProfile?
-            let rings: [[CLLocationCoordinate2D]]
             var outOfCoverage = false
             if let loc {
                 let hit = PrecinctDB.shared.lookup(lon: loc.coordinate.longitude, lat: loc.coordinate.latitude)
                 profile = hit?.profile
-                rings = hit?.rings ?? []                       // already decoded by lookup
                 outOfCoverage = hit == nil                     // located, but not in a covered state
-            } else if let cached = ProfileStore.load() {
-                profile = cached
-                rings = PrecinctDB.shared.exteriorRings(unitID: cached.unitID)
             } else {
-                profile = nil
-                rings = []
+                profile = ProfileStore.load()
             }
+            guard let p = profile else {
+                completion(.empty(outOfCoverage: outOfCoverage)); return
+            }
+            let trend = PrecinctDB.shared.electionSeries(unitID: p.unitID)
+                .filter { $0.office == "president" && $0.demShare != nil }
+                .sorted { $0.year < $1.year }
             // Presidential margin shift, earliest available election → latest (the "2016→2024 trend").
             var shiftPts: Int?, sinceYear: Int?
-            if let p = profile {
-                let series = PrecinctDB.shared.electionSeries(unitID: p.unitID)
-                    .filter { $0.office == "president" && $0.demShare != nil }
-                    .sorted { $0.year < $1.year }
-                if let first = series.first, let last = series.last, first.year != last.year,
-                   let a = first.demShare, let b = last.demShare {
-                    shiftPts = Int(((b - a) * 200).rounded()); sinceYear = first.year
-                }
+            if let first = trend.first, let last = trend.last, first.year != last.year,
+               let a = first.demShare, let b = last.demShare {
+                shiftPts = Int(((b - a) * 200).rounded()); sinceYear = first.year
             }
-            completion(PrecinctEntry(date: Date(), profile: profile, rings: rings,
+            // Narrowest meaningful area, so the widget says "vs Queens" rather than "vs NY" where
+            // the county is worth comparing against. The widget cannot read the app's picker
+            // (no App Group on a free account), so it picks the default rather than the choice,
+            // and the label always names whichever area it actually used.
+            let baseline = PrecinctDB.shared.comparisonAreas(for: p).first
+            completion(PrecinctEntry(date: Date(), profile: p, trend: trend, baseline: baseline,
                                      shiftPts: shiftPts, shiftSinceYear: sinceYear,
                                      outOfCoverage: outOfCoverage))
         }
@@ -115,7 +123,7 @@ struct PrecinctWidget: Widget {
         .contentMarginsDisabled()
         .configurationDisplayName("Precinctly")
         .description("The political lean and demographics of where you are.")
-        .supportedFamilies([.systemSmall, .systemMedium])
+        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
     }
 }
 
@@ -126,6 +134,7 @@ struct PrecinctHomeView: View {
     var body: some View {
         if let p = entry.profile {
             switch family {
+            case .systemLarge: large(p, entry)
             case .systemMedium: medium(p, entry)
             default: small(p, entry)
             }
@@ -136,121 +145,219 @@ struct PrecinctHomeView: View {
 
     /// Ledger rule: a hairline that runs edge to edge (margins are disabled at the config
     /// level, so the negative padding reaches the widget's true edges).
-    private func ledgerRule() -> some View {
-        Rectangle().fill(WidgetColor.rule).frame(height: 1).padding(.horizontal, -15)
+    private func ledgerRule(inset: CGFloat = -15) -> some View {
+        Rectangle().fill(WidgetColor.rule).frame(height: 1).padding(.horizontal, inset)
     }
 
-    /// Small framed "mini-map" of the precinct's own shape, lean-tinted.
-    private func precinctChip(_ rings: [[CLLocationCoordinate2D]], _ lean: Color, size: CGFloat = 38) -> some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 7).fill(WidgetColor.chipFill)
-            PrecinctOutline(rings: rings).fill(lean.opacity(0.22)).padding(5)
-            PrecinctOutline(rings: rings).stroke(lean, lineWidth: 1.4).padding(5)
-            RoundedRectangle(cornerRadius: 7).strokeBorder(WidgetColor.ink.opacity(0.4), lineWidth: 1)
+    private func placeLine(_ p: PrecinctProfile) -> String {
+        "\(precinctHeadline(p)), \(countyDisplay(p.borough)) \(p.state)"
+    }
+
+    /// Every reading the layouts draw from, widest first. One list so small, medium and large
+    /// report the same facts and differ only in how many of them fit.
+    private func stats(_ p: PrecinctProfile, _ base: Baseline?) -> [(String, String)] {
+        // The income label carries the comparison area, so the widget names the place it is
+        // measuring against without spending a whole line saying so.
+        [p.incomeMedian.map { (moneyShort($0), base.map { "Income vs \($0.displayName)" } ?? "Income") },
+         p.pctBachelorsOrHigher.map { (pctStr($0), "College") },
+         p.avgAge.map { (String(Int($0.rounded())), "Median age") },
+         p.pctRenter.map { (pctStr($0), "Renters") },
+         p.popTotal.map { (compactNum($0), "People") },
+         p.popDensity.map { ("\(compactNum(Int($0)))/mi²", "Density") }].compactMap { $0 }
+    }
+
+    private func statGrid(_ p: PrecinctProfile, _ e: PrecinctEntry,
+                          count: Int, columns: Int,
+                          valueSize: CGFloat, labelSize: CGFloat, spacing: CGFloat) -> some View {
+        let cols = Array(repeating: GridItem(.flexible(), spacing: 6, alignment: .topLeading), count: columns)
+        return LazyVGrid(columns: cols, alignment: .leading, spacing: spacing) {
+            ForEach(stats(p, e.baseline).prefix(count), id: \.1) { value, label in
+                StatCell(value: value, label: label, valueSize: valueSize, labelSize: labelSize)
+            }
         }
-        .frame(width: size, height: size)
     }
 
-    // "Ledger and chip": the old free-floating map grid never lined up with the text, so the
-    // paper is ruled instead — hairlines exactly between the row groups — and the precinct's
-    // real shape sits in a framed chip beside the header.
+    // MARK: Small — the headline and the bar stay; the trajectory gives up its margin labels
+    //
+    // Both together do not fit at 170pt. Turnout earns its line because nothing else on the
+    // widget reports it, and the chart still shows the shape of the last five elections.
+
     private func small(_ p: PrecinctProfile, _ e: PrecinctEntry) -> some View {
         let lean = WidgetColor.lean(p.leanDemShare)
         return VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top, spacing: 8) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(precinctTitle(p)).font(.caption2.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.7)
-                    Text("\(countyDisplay(p.borough)), \(p.state)").font(.system(size: 10)).foregroundStyle(.secondary)
-                        .lineLimit(2).minimumScaleFactor(0.8)
-                }
-                Spacer(minLength: 4)
-                if !e.rings.isEmpty { precinctChip(e.rings, lean, size: 34) }
-            }
-            ledgerRule().padding(.vertical, 7)
-            HStack(alignment: .center, spacing: 8) {
-                Text(p.leanShort).font(.system(size: 29, weight: .heavy, design: .serif))
-                    .foregroundStyle(lean).lineLimit(1).minimumScaleFactor(0.6)
-                if let sh = subline(p, e) {
-                    Text(sh).font(.system(size: 10)).foregroundStyle(.secondary)
-                        .lineLimit(2).minimumScaleFactor(0.8)
+            Text(placeLine(p)).font(.system(size: 9, weight: .semibold))
+                .lineLimit(1).minimumScaleFactor(0.6)
+            ledgerRule().padding(.top, 3).padding(.bottom, 4)
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Text(p.leanShort).font(.system(size: 26, weight: .heavy, design: .serif))
+                    .foregroundStyle(lean).lineLimit(1).minimumScaleFactor(0.5)
+                if let label = p.leanLabel {
+                    Text(label).font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(lean).lineLimit(1).minimumScaleFactor(0.6)
                 }
             }
-            ledgerRule().padding(.vertical, 7)
-            if let s = p.leanDemShare { TwoPartyBarW(demShare: s) }
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                if let top = p.raceBreakdown.first {
-                    Text("\(pctStr(top.value)) \(top.label)").font(.caption2.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.7)
+            if let s = p.leanDemShare {
+                TwoPartyBarW(demShare: s, height: 5).padding(.top, 3)
+                HStack(spacing: 0) {
+                    Text("\(pctStr(s)) D").foregroundStyle(WidgetColor.dem)
+                    Spacer(minLength: 2)
+                    if let sub = smallSubline(p, e) {
+                        Text(sub).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
+                        Spacer(minLength: 2)
+                    }
+                    Text("\(pctStr(1 - s)) R").foregroundStyle(WidgetColor.rep)
                 }
-                Spacer(minLength: 4)
-                if let inc = p.incomeMedian {
-                    Text("\(moneyShort(inc)) income").font(.system(size: 10)).foregroundStyle(.secondary)
-                        .lineLimit(1).minimumScaleFactor(0.7)
-                }
+                .font(.system(size: 7.5, weight: .semibold)).padding(.top, 2)
             }
-            .padding(.top, 6)
+            if e.trend.count >= 2 {
+                TrajectoryStrip(trend: e.trend, showMargins: false)
+                    .frame(height: 32).padding(.top, 4)
+            }
+            ledgerRule().padding(.top, 2).padding(.bottom, 5)
+            statGrid(p, e, count: 4, columns: 2, valueSize: 11.5, labelSize: 7.5, spacing: 5)
+            Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
+    /// Turnout normally, but a precinct decided by a handful of ballots says so instead. Same
+    /// honesty rule the sheet and the share card carry.
+    private func smallSubline(_ p: PrecinctProfile, _ e: PrecinctEntry) -> String? {
+        if let v = p.leanVotes, v < 100 { return "only \(v) vote\(v == 1 ? "" : "s")" }
+        if let t = p.turnoutEst, t <= 1.05 { return "\(pctStr(min(t, 1))) turnout" }
+        return nil
+    }
+
+    // MARK: Medium — lean and history on the left, the stat grid on the right
+
     private func medium(_ p: PrecinctProfile, _ e: PrecinctEntry) -> some View {
         let lean = WidgetColor.lean(p.leanDemShare)
         return VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top, spacing: 8) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(precinctTitle(p)).font(.caption.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.7)
-                    Text("\(countyDisplay(p.borough)), \(p.state)").font(.caption2).foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(precinctHeadline(p)).font(.system(size: 11, weight: .semibold))
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                Text("\(countyDisplay(p.borough)), \(p.state)").font(.system(size: 9.5))
+                    .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
+                Spacer(minLength: 2)
+                if let sub = mediumSubline(p, e) {
+                    Text(sub).font(.system(size: 8.5)).foregroundStyle(.secondary)
                         .lineLimit(1).minimumScaleFactor(0.7)
                 }
-                Spacer(minLength: 4)
-                if !e.rings.isEmpty { precinctChip(e.rings, lean, size: 36) }
             }
             ledgerRule().padding(.vertical, 6)
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(alignment: .center, spacing: 8) {
-                        Text(p.leanShort).font(.system(size: 33, weight: .heavy, design: .serif))
+            HStack(alignment: .top, spacing: 14) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(p.leanShort).font(.system(size: 34, weight: .heavy, design: .serif))
+                        .foregroundStyle(lean).lineLimit(1).minimumScaleFactor(0.5)
+                    if let label = p.leanLabel, let y = p.leanYear {
+                        Text("\(label) in \(String(y))").font(.system(size: 9, weight: .semibold))
                             .foregroundStyle(lean).lineLimit(1).minimumScaleFactor(0.6)
-                        if let sh = subline(p, e) {
-                            Text(sh).font(.caption2).foregroundStyle(.secondary)
-                                .lineLimit(2).minimumScaleFactor(0.8)
+                    }
+                    if let s = p.leanDemShare {
+                        TwoPartyBarW(demShare: s, height: 6).padding(.top, 4)
+                        HStack(spacing: 0) {
+                            Text("\(pctStr(s)) Dem").foregroundStyle(WidgetColor.dem)
+                            Spacer(minLength: 3)
+                            Text("\(pctStr(1 - s)) Rep").foregroundStyle(WidgetColor.rep)
                         }
+                        .font(.system(size: 8.5, weight: .semibold)).padding(.top, 2)
                     }
                     Spacer(minLength: 2)
-                    if let s = p.leanDemShare { TwoPartyBarW(demShare: s).frame(width: 150) }
+                    if e.trend.count >= 2 {
+                        TrajectoryStrip(trend: e.trend, showMargins: false).frame(height: 34)
+                    }
+                }
+                .frame(width: 148)
+                VStack(alignment: .leading, spacing: 6) {
+                    statGrid(p, e, count: 6, columns: 2, valueSize: 13, labelSize: 8.5, spacing: 7)
+                    if let top = p.raceBreakdown.first {
+                        Text("\(pctStr(top.value)) \(top.label)")
+                            .font(.system(size: 8.5)).foregroundStyle(.secondary)
+                            .lineLimit(1).minimumScaleFactor(0.7)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                statGrid(p)
             }
-            .frame(maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private func statGrid(_ p: PrecinctProfile) -> some View {
-        let cols = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
-        return LazyVGrid(columns: cols, alignment: .leading, spacing: 6) {
-            if let top = p.raceBreakdown.first { miniStat(top.label, pctStr(top.value)) }
-            if let inc = p.incomeMedian { miniStat("Income", moneyShort(inc)) }
-            if let ba = p.pctBachelorsOrHigher { miniStat("College", pctStr(ba)) }
-            if let age = p.avgAge { miniStat("Median age", "\(Int(age.rounded()))") }
-            if let r = p.pctRenter { miniStat("Renters", pctStr(r)) }
-            if let pop = p.popTotal { miniStat("People", compactNum(pop)) }
+    private func mediumSubline(_ p: PrecinctProfile, _ e: PrecinctEntry) -> String? {
+        if let v = p.leanVotes, v < 100 { return "only \(v) vote\(v == 1 ? "" : "s") cast" }
+        if let t = p.turnoutEst, t <= 1.05, let v = p.leanVotes {
+            return "\(pctStr(min(t, 1))) turnout from \(compactNum(v)) votes"
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        return nil
     }
 
-    private func miniStat(_ title: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(value).font(.caption.bold()).lineLimit(1).minimumScaleFactor(0.7)
-            Text(title).font(.caption2).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
+    // MARK: Large — the whole profile
+
+    private func large(_ p: PrecinctProfile, _ e: PrecinctEntry) -> some View {
+        let lean = WidgetColor.lean(p.leanDemShare)
+        return VStack(alignment: .leading, spacing: 0) {
+            Text(precinctHeadline(p)).font(.system(size: 13, weight: .semibold))
+                .lineLimit(1).minimumScaleFactor(0.7)
+            Text("\(countyDisplay(p.borough)), \(p.state)").font(.system(size: 10.5))
+                .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
+            ledgerRule().padding(.vertical, 8)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(p.leanShort).font(.system(size: 40, weight: .heavy, design: .serif))
+                    .foregroundStyle(lean).lineLimit(1).minimumScaleFactor(0.5)
+                if let label = p.leanLabel, let y = p.leanYear {
+                    Text("\(label) in \(String(y))").font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(lean).lineLimit(1).minimumScaleFactor(0.6)
+                }
+            }
+            if let s = p.leanDemShare {
+                TwoPartyBarW(demShare: s, height: 7).padding(.top, 5)
+                HStack(spacing: 0) {
+                    Text("\(pctStr(s)) Dem").foregroundStyle(WidgetColor.dem)
+                    Spacer(minLength: 4)
+                    if let sub = mediumSubline(p, e) {
+                        Text(sub).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
+                        Spacer(minLength: 4)
+                    }
+                    Text("\(pctStr(1 - s)) Rep").foregroundStyle(WidgetColor.rep)
+                }
+                .font(.system(size: 9, weight: .semibold)).padding(.top, 3)
+            }
+            if e.trend.count >= 2 {
+                sectionHead("Presidential trajectory")
+                TrajectoryStrip(trend: e.trend).frame(height: 68)
+            }
+            let rows = p.raceBreakdown.filter { $0.value >= 0.02 }.prefix(4)
+            if !rows.isEmpty {
+                sectionHead("Who lives here")
+                VStack(spacing: 4) {
+                    ForEach(Array(rows.enumerated()), id: \.element.label) { idx, item in
+                        HStack(spacing: 7) {
+                            Text(item.label).font(.system(size: 9.5))
+                                .frame(width: 62, alignment: .leading).lineLimit(1).minimumScaleFactor(0.7)
+                            GeometryReader { geo in
+                                Rectangle().fill(WidgetColor.rankTint(idx))
+                                    .frame(width: max(2, geo.size.width * min(1, item.value)))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .frame(height: 5)
+                            Text(pctStr(item.value)).font(.system(size: 9.5, weight: .semibold))
+                                .frame(width: 32, alignment: .trailing)
+                        }
+                    }
+                }
+            }
+            sectionHead("The numbers")
+            statGrid(p, e, count: 6, columns: 3, valueSize: 14, labelSize: 8.5, spacing: 8)
+            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    /// The line under the big lean number: a shift like "D+6 since 2016", except in
-    /// tiny-electorate precincts where both the lean and the shift rest on a handful of
-    /// ballots; say that instead. (100 matches By-the-Numbers' vote floor.)
-    private func subline(_ p: PrecinctProfile, _ e: PrecinctEntry) -> String? {
-        if let v = p.leanVotes, v < 100 { return "Only \(v) vote\(v == 1 ? "" : "s") cast" }
-        return shiftLabel(e.shiftPts, e.shiftSinceYear)
+    private func sectionHead(_ title: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.system(size: 10, weight: .semibold, design: .serif))
+            ledgerRule()
+        }
+        .padding(.top, 11).padding(.bottom, 6)
     }
 
     private var placeholder: some View {
@@ -264,22 +371,13 @@ struct PrecinctHomeView: View {
     }
 }
 
-/// CA precinct names are bare SOS ids ("7602", "1290023A"); prefix those so the widget doesn't
-/// title itself with a naked number. NY ("AD 75 ED 14") and MA ("...Precinct 1") already read fine.
-/// Zero-padded ids ("000363") are stripped first so titles read "Precinct 363".
-private func precinctTitle(_ p: PrecinctProfile) -> String {
-    guard let raw = p.precinctName, !raw.isEmpty else { return "Precinct" }
-    let n = precinctDisplayName(raw)
-    if n.localizedCaseInsensitiveContains("precinct") { return n }
-    if let f = n.first, f.isNumber, !n.contains(" ") { return "Precinct \(n)" }
-    return n
-}
 
 // MARK: - Hand-drawn-style widget components (static; widgets can't run live filters)
 
 /// Two-party bar: blue (Dem) over red (Rep), capsule-clipped, with a dark ink outline.
 private struct TwoPartyBarW: View {
     let demShare: Double
+    var height: CGFloat = 9
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
@@ -287,37 +385,97 @@ private struct TwoPartyBarW: View {
                 Rectangle().fill(WidgetColor.dem).frame(width: max(4, geo.size.width * demShare))
             }
             .clipShape(Capsule())
-            .overlay(Capsule().strokeBorder(WidgetColor.ink, lineWidth: 1.2))
+            .overlay(Capsule().strokeBorder(WidgetColor.ink, lineWidth: height >= 7 ? 1.2 : 0.8))
         }
-        .frame(height: 9)
+        .frame(height: height)
     }
 }
 
-/// The selected precinct's polygon(s), normalized into the view's rect (aspect-fit, y-flipped).
-private struct PrecinctOutline: Shape {
-    let rings: [[CLLocationCoordinate2D]]
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        guard !rings.isEmpty else { return path }
-        var minLon = Double.greatestFiniteMagnitude, maxLon = -Double.greatestFiniteMagnitude
-        var minLat = Double.greatestFiniteMagnitude, maxLat = -Double.greatestFiniteMagnitude
-        for ring in rings { for c in ring {
-            minLon = min(minLon, c.longitude); maxLon = max(maxLon, c.longitude)
-            minLat = min(minLat, c.latitude);  maxLat = max(maxLat, c.latitude)
-        }}
-        let w = maxLon - minLon, h = maxLat - minLat
-        guard w > 0, h > 0 else { return path }
-        let scale = min(rect.width / w, rect.height / h)
-        let ox = rect.midX - (w * scale) / 2, oy = rect.midY - (h * scale) / 2
-        for ring in rings where ring.count > 2 {
-            for (i, c) in ring.enumerated() {
-                let pt = CGPoint(x: ox + (c.longitude - minLon) * scale,
-                                 y: oy + (maxLat - c.latitude) * scale)   // flip: north = up
-                if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
-            }
-            path.closeSubpath()
+/// value over label, serif number. The unit the stat grids are built from.
+private struct StatCell: View {
+    let value: String, label: String
+    let valueSize: CGFloat, labelSize: CGFloat
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(value).font(.system(size: valueSize, weight: .semibold, design: .serif))
+                .lineLimit(1).minimumScaleFactor(0.6)
+            Text(label).font(.system(size: labelSize)).foregroundStyle(.secondary)
+                .lineLimit(1).minimumScaleFactor(0.7)
         }
-        return path
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Presidential margin over time. Same chart as the profile sheet, sized for a widget.
+private struct TrajectoryStrip: View {
+    let trend: [ElectionResult]
+    var showMargins = true
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width, h = geo.size.height
+            // With margin labels on, the plot stops well short of the year row: a year that
+            // crosses over puts its label BELOW the axis, and that label needs somewhere to sit
+            // that is neither on the dashes nor on the years.
+            let top: CGFloat = showMargins ? 11 : 2
+            let bottom = h - (showMargins ? 21 : 12)
+            let n = max(1, trend.count)
+            let slot = w / CGFloat(n)
+            let px: (Int) -> CGFloat = { i in slot * (CGFloat(i) + 0.5) }
+            let barW = min(26, slot * 0.52)
+            let shares = trend.compactMap { $0.demShare }
+            let lo0 = shares.min() ?? 0.4, hi0 = shares.max() ?? 0.6
+            let pad = max(0.02, (hi0 - lo0) * 0.12)
+            let lo = min(0.5, lo0 - pad), hi = max(0.5, hi0 + pad)
+            let py: (Double) -> CGFloat = { s in bottom - CGFloat((s - lo) / (hi - lo)) * (bottom - top) }
+            ZStack {
+                ForEach(Array(trend.enumerated()), id: \.offset) { i, e in
+                    let s = e.demShare ?? 0.5
+                    let yEven = py(0.5), yVal = py(s), up = s >= 0.5
+                    UnevenRoundedRectangle(topLeadingRadius: up ? 2 : 0, bottomLeadingRadius: up ? 0 : 2,
+                                           bottomTrailingRadius: up ? 0 : 2, topTrailingRadius: up ? 2 : 0)
+                        .fill(WidgetColor.lean(s))
+                        .frame(width: barW, height: max(1.5, abs(yVal - yEven)))
+                        .position(x: px(i), y: (yEven + yVal) / 2)
+                }
+                // Drawn OVER the bars: behind them, a year that only just crosses over reads as
+                // a clipped bar instead of a crossing.
+                Path { p in
+                    p.move(to: CGPoint(x: 0, y: py(0.5)))
+                    p.addLine(to: CGPoint(x: w, y: py(0.5)))
+                }
+                .stroke(WidgetColor.rule, style: StrokeStyle(lineWidth: 1, dash: [2.5, 2.5]))
+                ForEach(Array(trend.enumerated()), id: \.offset) { i, e in
+                    let s = e.demShare ?? 0.5
+                    if showMargins {
+                        // Offset from the AXIS, not the bar tip: a barely-crossed year has a 2pt
+                        // bar sitting on the line, and a tip-relative label lands on the dashes.
+                        // Split out of the .position call: inline, the ternary over two CGFloat
+                        // min/max chains blows the type checker's budget.
+                        let labelY: CGFloat = marginLabelY(share: s, axis: py(0.5), tip: py(s), height: h)
+                        Text(marginLabel(s)).font(.system(size: 7.5, weight: .bold))
+                            .foregroundStyle(WidgetColor.lean(s))
+                            .position(x: px(i), y: labelY)
+                    }
+                    Text(String(e.year).suffix(2)).font(.system(size: 8))
+                        .foregroundStyle(.secondary)
+                        .position(x: px(i), y: h - 4)
+                }
+            }
+        }
+        .accessibilityElement()
+        .accessibilityLabel("Presidential margin over time: "
+                            + trend.map { "\($0.year) \(marginLabel($0.demShare ?? 0.5))" }.joined(separator: ", "))
+    }
+
+    private func marginLabel(_ s: Double) -> String {
+        let m = Int((abs(s - 0.5) * 200).rounded())
+        return m < 1 ? "Even" : (s >= 0.5 ? "D+" : "R+") + "\(m)"
+    }
+
+    private func marginLabelY(share: Double, axis: CGFloat, tip: CGFloat, height: CGFloat) -> CGFloat {
+        if share >= 0.5 { return max(5, min(axis, tip) - 7) }
+        return min(max(axis, tip) + 8, height - 13)
     }
 }
 
@@ -354,7 +512,7 @@ struct PrecinctLockView: View {
             }
         default: // accessoryRectangular
             VStack(alignment: .leading, spacing: 1) {
-                Text(p.map(precinctTitle) ?? "Precinctly").font(.headline).widgetAccentable().lineLimit(1)
+                Text(p.map(precinctHeadline) ?? "Precinctly").font(.headline).widgetAccentable().lineLimit(1)
                 Text(p.map { "\(countyDisplay($0.borough)), \($0.state)" }
                      ?? (entry.outOfCoverage ? "No precinct here yet" : "Open Precinctly"))
                     .font(.caption2).lineLimit(1)
@@ -416,6 +574,16 @@ private enum WidgetColor {
     /// Party anchors, same values as the app's Palette.dem/.rep.
     static let dem = lean(0.9)
     static let rep = lean(0.1)
+    /// Restrained single-hue ramp keyed by rank, mirroring the app's Palette.rankTint: largest
+    /// group darkest. Lighter base in dark mode so the low ranks stay visible.
+    static func rankTint(_ rank: Int) -> Color {
+        let base = Color(UIColor { tc in
+            tc.userInterfaceStyle == .dark
+                ? UIColor(red: 0.62, green: 0.66, blue: 0.82, alpha: 1)
+                : UIColor(red: 0.36, green: 0.40, blue: 0.58, alpha: 1)
+        })
+        return base.opacity(max(0.35, 1.0 - Double(rank) * 0.16))
+    }
     /// Adapts to the widget's light/dark rendering so text (which uses adaptive .primary/.secondary)
     /// always contrasts the paper — fixes white-on-light-paper in dark mode.
     private static func dynamic(_ light: (Double, Double, Double), _ dark: (Double, Double, Double)) -> Color {

@@ -27,6 +27,7 @@ site/assets/_backup_*/
 CLAUDE.md
 AGENTS.md
 .claude/
+.agents/
 package.json
 package-lock.json
 capture.js

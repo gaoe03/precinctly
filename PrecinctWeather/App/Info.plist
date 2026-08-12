@@ -29,6 +29,8 @@
 		<key>PrecinctLookup</key>
 		<string>Precincts are only a few blocks wide, so an approximate location can place you in the wrong one.</string>
 	</dict>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Saves the precinct card you're sharing to your photo library. Precinctly never reads your photos.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Shows the political lean and demographic profile of the precinct you're currently in. Precinct matching happens on your device.</string>
 	<key>UIApplicationSceneManifest</key>

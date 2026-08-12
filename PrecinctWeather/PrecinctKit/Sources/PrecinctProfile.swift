@@ -24,6 +24,17 @@ public func precinctTitleDisplay(_ name: String) -> String {
     return "Precinct \(precinctDisplayName(name))"
 }
 
+/// Headline form of a precinct's name. `precinctTitleDisplay` only prefixes all-numeric ids, so a
+/// CA id like "1290023A" would otherwise read as a naked serial. The rule: one bare token that
+/// starts with a digit is a precinct number, not a name.
+public func precinctHeadline(_ p: PrecinctProfile) -> String {
+    guard let raw = p.precinctName, !raw.isEmpty else { return "Precinct" }
+    let n = precinctTitleDisplay(raw)
+    if n.localizedCaseInsensitiveContains("precinct") { return n }
+    if let f = n.first, f.isNumber, !n.contains(" ") { return "Precinct \(n)" }
+    return n
+}
+
 /// The `borough` column holds a bare county name everywhere except NYC, where it's a borough
 /// name. Append " County" for display — but never to the 5 NYC boroughs (you'd get the wrong /
 /// awkward name, e.g. "Brooklyn County" instead of Kings County).
@@ -154,8 +165,50 @@ public struct ElectionResult: Codable, Sendable, Identifiable {
     }
 }
 
-/// Statewide averages, for "vs <state>" context.
+/// What a precinct's numbers get compared against. The state is always available; the county and
+/// (for the five boroughs) New York City are offered when they're big enough to be worth reading.
+///
+/// The scope strings are the `baselines.scope` keys written by `apply_area_baselines.py`. State
+/// rows keep their bare abbreviation so nothing that already reads `baseline(scope: p.state)`
+/// changes meaning.
+public enum ComparisonArea: String, Codable, CaseIterable, Sendable {
+    case state, county, metro
+
+    public func scopeKey(for profile: PrecinctProfile) -> String? {
+        switch self {
+        case .state:  return profile.state
+        case .county: return "county|\(profile.state)|\(profile.borough)"
+        case .metro:  return Metro.containing(profile).map { "metro|\(profile.state)|\($0)" }
+        }
+    }
+}
+
+/// Cities that span several counties, so "vs New York City" can't come from a county row.
+/// The borough list is the same five names `countyDisplay(_:)` special-cases above; if one
+/// changes, change the other.
+public enum Metro {
+    static let nycBoroughs: Set<String> = ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"]
+
+    public static func containing(_ profile: PrecinctProfile) -> String? {
+        guard profile.state == "NY", nycBoroughs.contains(profile.borough) else { return nil }
+        return "New York City"
+    }
+}
+
+/// Area averages, for "vs <area>" context.
 public struct Baseline: Codable, Sendable {
+    /// Below this a precinct is a large fraction of the area it's being compared against, so the
+    /// comparison mostly measures the precinct itself. 174 of Texas's 254 counties sit under 20
+    /// precincts and Nantucket has exactly one, so this is not a rare edge.
+    public static let meaningfulPrecinctCount = 25
+
+    /// True when this area has enough precincts to be worth comparing a single precinct against.
+    /// Old DBs predate the column and report nil, in which case assume it's fine.
+    public var isMeaningful: Bool {
+        guard let precinctCount else { return true }
+        return precinctCount >= Self.meaningfulPrecinctCount
+    }
+
     public let scope: String
     public let pctWhite: Double?
     public let pctBlack: Double?
@@ -166,13 +219,30 @@ public struct Baseline: Codable, Sendable {
     public let pctRenter: Double?
     public let avgAge: Double?
     public let leanDemShare: Double?
+    /// How many precincts the area covers. Drives `isMeaningful`.
+    public let precinctCount: Int?
+    /// Short form for the "vs X" labels: "NY", "Brooklyn", "NYC". Deliberately terse, these sit
+    /// in a caption under a stat and next to a menu. Computed, not stored, so it stays out of
+    /// the Codable representation that gets cached.
+    public var displayName: String { Baseline.shortName(for: scope) }
 
     public init(scope: String, pctWhite: Double?, pctBlack: Double?, pctHispanic: Double?,
                 pctAsian: Double?, pctBachelorsOrHigher: Double?, incomeMedian: Int?,
-                pctRenter: Double?, avgAge: Double?, leanDemShare: Double?) {
+                pctRenter: Double?, avgAge: Double?, leanDemShare: Double?,
+                precinctCount: Int? = nil) {
         self.scope = scope; self.pctWhite = pctWhite; self.pctBlack = pctBlack
         self.pctHispanic = pctHispanic; self.pctAsian = pctAsian
         self.pctBachelorsOrHigher = pctBachelorsOrHigher; self.incomeMedian = incomeMedian
         self.pctRenter = pctRenter; self.avgAge = avgAge; self.leanDemShare = leanDemShare
+        self.precinctCount = precinctCount
+    }
+
+    /// "NY" stays as-is, "county|NY|Brooklyn" becomes "Brooklyn", "metro|NY|New York City"
+    /// becomes "NYC" because the full name is too long to sit in a stat caption.
+    static func shortName(for scope: String) -> String {
+        let parts = scope.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count == 3 else { return scope }
+        if parts[0] == "metro" { return parts[2] == "New York City" ? "NYC" : parts[2] }
+        return parts[2]
     }
 }

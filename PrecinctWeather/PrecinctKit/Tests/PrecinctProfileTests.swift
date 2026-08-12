@@ -20,13 +20,42 @@ final class PrecinctProfileTests: XCTestCase {
         XCTAssertEqual(precinctTitleDisplay("Chatham Town Precinct 1"), "Chatham Town Precinct 1")
     }
 
+    /// The headline form used by the widgets and the share card. It exists because
+    /// `precinctTitleDisplay` only prefixes all-numeric ids, which left CA's alphanumeric SOS ids
+    /// reading as naked serials.
+    func testPrecinctHeadlinePrefixesBareIdentifiersButNeverRealNames() {
+        func named(_ name: String?) -> PrecinctProfile {
+            PrecinctProfile(unitID: "u", borough: "Queens", state: "NY", precinctName: name,
+                            leanLabel: nil, leanDemShare: nil, prevDemShare: nil, leanYear: nil,
+                            prevYear: nil, leanShift: nil, leanVotes: nil, turnoutEst: nil,
+                            popTotal: nil, vapTotal: nil, cvap: nil,
+                            pctWhite: nil, pctBlack: nil, pctHispanic: nil, pctAsian: nil,
+                            pctNative: nil, pctPacific: nil, pctOther: nil, pluralityGroup: nil,
+                            pctNoHS: nil, pctHS: nil, pctBachelors: nil, pctGraduate: nil,
+                            pctBachelorsOrHigher: nil, incomeMedian: nil, popDensity: nil,
+                            avgAge: nil, pctRenter: nil, pctOwner: nil, dataComplete: false)
+        }
+        XCTAssertEqual(precinctHeadline(named("001320")), "Precinct 1320")
+        XCTAssertEqual(precinctHeadline(named("7516")), "Precinct 7516")
+        // The CA case this helper was written for: alphanumeric, one token, starts with a digit.
+        XCTAssertEqual(precinctHeadline(named("1290023A")), "Precinct 1290023A")
+        // Real names pass through untouched, and are never double-prefixed.
+        XCTAssertEqual(precinctHeadline(named("AD 65 ED 21")), "AD 65 ED 21")
+        XCTAssertEqual(precinctHeadline(named("Chatham Town Precinct 1")), "Chatham Town Precinct 1")
+        XCTAssertEqual(precinctHeadline(named(nil)), "Precinct")
+        XCTAssertEqual(precinctHeadline(named("")), "Precinct")
+    }
+
     func testLeanShortRoundingBoundaries() {
         XCTAssertEqual(profile(share: nil).leanShort, "—")
         XCTAssertEqual(profile(share: 0.5).leanShort, "Even")
         XCTAssertEqual(profile(share: 0.502).leanShort, "Even")
-        XCTAssertEqual(profile(share: 0.504).leanShort, "D +1")
-        XCTAssertEqual(profile(share: 0).leanShort, "R +100")
-        XCTAssertEqual(profile(share: 1).leanShort, "D +100")
+        // No space after the letter. This is the form the app, the widgets, the share card and
+        // the site have always shipped ("D+87"); the spaced literals here were a typo that made
+        // the suite red against correct code.
+        XCTAssertEqual(profile(share: 0.504).leanShort, "D+1")
+        XCTAssertEqual(profile(share: 0).leanShort, "R+100")
+        XCTAssertEqual(profile(share: 1).leanShort, "D+100")
     }
 
     func testRaceBreakdownFiltersNonPositiveValuesAndSortsDescending() {

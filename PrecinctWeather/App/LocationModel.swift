@@ -37,7 +37,32 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
     @Published var selectedRings: [[CLLocationCoordinate2D]] = []
     @Published var neighborPins: [PrecinctPin] = []
     @Published var presidentTrend: [ElectionResult] = []   // president Dem two-party share over time
+    /// The baseline the "vs X" deltas are measured against. Named for history; it is whichever
+    /// area the reader picked, resolved for this precinct.
     @Published var stateBaseline: Baseline?
+    /// Every area this precinct could be compared against, narrowest first. Varies by precinct:
+    /// a Brooklyn precinct offers Brooklyn, NYC, and NY; a rural Texas one offers only TX.
+    @Published var comparisonAreas: [Baseline] = []
+
+    /// The reader's preference, remembered across launches. It is a *preference*, not a promise:
+    /// `resolvedBaseline` falls back when the chosen area doesn't exist or is too small here, and
+    /// every label is drawn from the resolved baseline so it always names what it actually shows.
+    var comparisonPreference: ComparisonArea {
+        get { ComparisonArea(rawValue: UserDefaults.standard.string(forKey: "comparisonArea") ?? "") ?? .state }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: "comparisonArea")
+            if let p = selection { stateBaseline = resolvedBaseline(for: p) }
+        }
+    }
+
+    func resolvedBaseline(for p: PrecinctProfile) -> Baseline? {
+        let areas = comparisonAreas.isEmpty ? PrecinctDB.shared.comparisonAreas(for: p) : comparisonAreas
+        if let key = comparisonPreference.scopeKey(for: p),
+           let match = areas.first(where: { $0.scope == key }) {
+            return match
+        }
+        return areas.last   // the state row, which is always present
+    }
     @Published var toast: String?
     @Published var locationDenied = false
     @Published var showSearch = false
@@ -259,7 +284,8 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
         presidentTrend = PrecinctDB.shared.electionSeries(unitID: p.unitID)
             .filter { $0.office == "president" && $0.demShare != nil }
             .sorted { $0.year < $1.year }
-        stateBaseline = PrecinctDB.shared.baseline(scope: p.state)
+        comparisonAreas = PrecinctDB.shared.comparisonAreas(for: p)
+        stateBaseline = resolvedBaseline(for: p)
         if let bb = Self.boundingBox(of: rings) {
             let padLon = (bb.maxLon - bb.minLon) * 0.9 + 0.004
             let padLat = (bb.maxLat - bb.minLat) * 0.9 + 0.004

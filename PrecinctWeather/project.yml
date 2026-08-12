@@ -14,6 +14,17 @@ schemes:
       config: Debug
       targets:
         - PrecinctKitTests
+  # The UI test target depends on the app, so xcodebuild builds it. Do NOT list PrecinctWeather
+  # under build.targets here: XcodeGen then stops auto-generating the `PrecinctWeather` scheme,
+  # which is the one every build/deploy command in the build-and-deploy skill uses.
+  PrecinctWeatherUITests:
+    build:
+      targets:
+        PrecinctWeatherUITests: test
+    test:
+      config: Debug
+      targets:
+        - PrecinctWeatherUITests
 settings:
   base:
     SWIFT_VERSION: "5.0"
@@ -74,6 +85,19 @@ targets:
         embed: true
       - target: PrecinctWidgetExtension
         embed: true
+
+  PrecinctWeatherUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - UITests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.gaoe.PrecinctWeatherUITests
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "1"
+    dependencies:
+      - target: PrecinctWeather
 
   PrecinctWidgetExtension:
     type: app-extension

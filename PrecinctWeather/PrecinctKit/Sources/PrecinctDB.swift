@@ -252,9 +252,13 @@ public final class PrecinctDB {
     }
 
     public func baseline(scope: String) -> Baseline? {
+        // precinct_count is read through a subselect on the table's own columns so this still
+        // works against a DB built before apply_area_baselines.py added the column.
+        let hasCount = columnExists("baselines", "precinct_count")
         let sql = """
             SELECT scope, pct_white, pct_black, pct_hispanic, pct_asian,
                    pct_ba_or_higher, income_median, pct_renter, avg_age, pres24_dem_share
+                   \(hasCount ? ", precinct_count" : "")
             FROM baselines WHERE scope = ?
             """
         var stmt: OpaquePointer?
@@ -267,7 +271,27 @@ public final class PrecinctDB {
                         pctHispanic: dbl(stmt, 3), pctAsian: dbl(stmt, 4),
                         pctBachelorsOrHigher: dbl(stmt, 5), incomeMedian: int(stmt, 6),
                         pctRenter: dbl(stmt, 7), avgAge: dbl(stmt, 8),
-                        leanDemShare: dbl(stmt, 9))
+                        leanDemShare: dbl(stmt, 9),
+                        precinctCount: hasCount ? int(stmt, 10) : nil)
+    }
+
+    /// Every area this precinct can be compared against, widest last, skipping any that are too
+    /// small to mean anything. The state is always present, so this is never empty.
+    public func comparisonAreas(for profile: PrecinctProfile) -> [Baseline] {
+        [ComparisonArea.county, .metro, .state].compactMap { area in
+            guard let key = area.scopeKey(for: profile), let base = baseline(scope: key) else { return nil }
+            return (area == .state || base.isMeaningful) ? base : nil
+        }
+    }
+
+    private func columnExists(_ table: String, _ column: String) -> Bool {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "PRAGMA table_info(\(table))", -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if text(stmt, 1) == column { return true }
+        }
+        return false
     }
 
     // MARK: Fun facts (dataset superlatives)
