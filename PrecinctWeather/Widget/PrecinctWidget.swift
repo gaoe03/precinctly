@@ -116,7 +116,7 @@ struct PrecinctWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "PrecinctWidget", provider: PrecinctProvider()) { entry in
             PrecinctHomeView(entry: entry)
-                .padding(EdgeInsets(top: 14, leading: 15, bottom: 14, trailing: 15))
+                .padding(EdgeInsets(top: 18, leading: 20, bottom: 18, trailing: 20))
                 .containerBackground(WidgetColor.mapTone, for: .widget)
         }
         // Margins are ours so the ledger rules can run edge to edge like a printed sheet.
@@ -145,7 +145,7 @@ struct PrecinctHomeView: View {
 
     /// Ledger rule: a hairline that runs edge to edge (margins are disabled at the config
     /// level, so the negative padding reaches the widget's true edges).
-    private func ledgerRule(inset: CGFloat = -15) -> some View {
+    private func ledgerRule(inset: CGFloat = -20) -> some View {
         Rectangle().fill(WidgetColor.rule).frame(height: 1).padding(.horizontal, inset)
     }
 
@@ -155,10 +155,10 @@ struct PrecinctHomeView: View {
 
     /// Every reading the layouts draw from, widest first. One list so small, medium and large
     /// report the same facts and differ only in how many of them fit.
-    private func stats(_ p: PrecinctProfile, _ base: Baseline?) -> [(String, String)] {
-        // The income label carries the comparison area, so the widget names the place it is
-        // measuring against without spending a whole line saying so.
-        [p.incomeMedian.map { (moneyShort($0), base.map { "Income vs \($0.displayName)" } ?? "Income") },
+    /// `namesArea` false where the cell is too narrow to hold "Income vs Orange" without
+    /// truncating, in which case the caller names the area somewhere with room.
+    private func stats(_ p: PrecinctProfile, _ base: Baseline?, namesArea: Bool = true) -> [(String, String)] {
+        [p.incomeMedian.map { (moneyShort($0), (namesArea ? base.map { "Income vs \($0.displayName)" } : nil) ?? "Income") },
          p.pctBachelorsOrHigher.map { (pctStr($0), "College") },
          p.avgAge.map { (String(Int($0.rounded())), "Median age") },
          p.pctRenter.map { (pctStr($0), "Renters") },
@@ -168,10 +168,11 @@ struct PrecinctHomeView: View {
 
     private func statGrid(_ p: PrecinctProfile, _ e: PrecinctEntry,
                           count: Int, columns: Int,
-                          valueSize: CGFloat, labelSize: CGFloat, spacing: CGFloat) -> some View {
+                          valueSize: CGFloat, labelSize: CGFloat, spacing: CGFloat,
+                          namesArea: Bool = true) -> some View {
         let cols = Array(repeating: GridItem(.flexible(), spacing: 6, alignment: .topLeading), count: columns)
         return LazyVGrid(columns: cols, alignment: .leading, spacing: spacing) {
-            ForEach(stats(p, e.baseline).prefix(count), id: \.1) { value, label in
+            ForEach(stats(p, e.baseline, namesArea: namesArea).prefix(count), id: \.1) { value, label in
                 StatCell(value: value, label: label, valueSize: valueSize, labelSize: labelSize)
             }
         }
@@ -323,7 +324,7 @@ struct PrecinctHomeView: View {
             }
             if e.trend.count >= 2 {
                 sectionHead("Presidential trajectory")
-                TrajectoryStrip(trend: e.trend).frame(height: 68)
+                TrajectoryStrip(trend: e.trend).frame(height: 60)
             }
             let rows = p.raceBreakdown.filter { $0.value >= 0.02 }.prefix(4)
             if !rows.isEmpty {
@@ -345,11 +346,11 @@ struct PrecinctHomeView: View {
                     }
                 }
             }
-            sectionHead("The numbers")
-            statGrid(p, e, count: 6, columns: 3, valueSize: 14, labelSize: 8.5, spacing: 8)
-            Spacer(minLength: 0)
+            sectionHead(e.baseline.map { "The numbers, vs \($0.displayName)" } ?? "The numbers")
+            statGrid(p, e, count: 6, columns: 3, valueSize: 14, labelSize: 8.5, spacing: 8,
+                     namesArea: false)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
     private func sectionHead(_ title: String) -> some View {
@@ -357,7 +358,7 @@ struct PrecinctHomeView: View {
             Text(title).font(.system(size: 10, weight: .semibold, design: .serif))
             ledgerRule()
         }
-        .padding(.top, 11).padding(.bottom, 6)
+        .padding(.top, 8).padding(.bottom, 5)
     }
 
     private var placeholder: some View {
