@@ -13,7 +13,7 @@ final class ShareCardUITests: XCTestCase {
         let app = XCUIApplication()
         // NSArgumentDomain beats the persisted value, so @AppStorage reads these without the
         // app knowing it's under test and without polluting the sim's defaults.
-        app.launchArguments = ["-hasOnboarded", "YES", "-hapticsEnabled", "NO"]
+        app.launchArguments = ["-hasOnboarded", "YES", "-hapticsEnabled", "NO", "-defaultState", "NY"]
         // Lets one run check a different appearance without editing the test:
         //   TEST_RUNNER_APPEARANCE=dark xcodebuild test ...
         if let appearance = ProcessInfo.processInfo.environment["APPEARANCE"] {
@@ -101,6 +101,81 @@ final class ShareCardUITests: XCTestCase {
                           "chip '\(worst.label)' is \(worst.height)pt tall, so it wrapped onto multiple lines")
     }
 
+    /// Switching coverage areas used to animate the pill before the destination profile and
+    /// county tint had settled. Repeated switches should keep one stable control frame and never
+    /// expose a stale destination while the new map loads.
+    func testCoverageAreaSwitchKeepsSelectorFrame() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-hasOnboarded", "YES", "-hapticsEnabled", "NO", "-defaultState", "DMV"]
+        app.launch()
+
+        let switcher = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH 'Switch coverage area'")
+        ).firstMatch
+        XCTAssertTrue(switcher.waitForExistence(timeout: 15), "coverage area selector missing")
+        let initialWidth = switcher.frame.width
+
+        for name in ["California", "Texas", "DMV (DC, MD, VA)", "California", "DMV (DC, MD, VA)"] {
+            switcher.tap()
+            let option = app.buttons[name].firstMatch
+            XCTAssertTrue(option.waitForExistence(timeout: 10), "menu option '\(name)' missing")
+            option.tap()
+            XCTAssertTrue(switcher.waitForExistence(timeout: 5), "coverage area selector disappeared after '\(name)'")
+            XCTAssertEqual(switcher.frame.width, initialWidth, accuracy: 1.0,
+                           "selector width changed after switching to '\(name)'")
+        }
+    }
+
+    /// DMV is an aggregate navigation area, not a dead-end screen. A map tap at the DMV center
+    /// must still resolve a precinct and show its profile.
+    func testDMVMapTapResolvesPrecinct() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-hasOnboarded", "YES", "-hapticsEnabled", "NO", "-defaultState", "DMV"]
+        app.launch()
+
+        let switcher = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH 'Switch coverage area'")
+        ).firstMatch
+        XCTAssertTrue(switcher.waitForExistence(timeout: 15), "coverage area selector missing")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.42)).tap()
+
+        let hero = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS 'Political lean'"))
+            .firstMatch
+        XCTAssertTrue(hero.waitForExistence(timeout: 10), "DMV map tap did not resolve a precinct")
+
+        switcher.tap()
+        let california = app.buttons["California"].firstMatch
+        XCTAssertTrue(california.waitForExistence(timeout: 10), "state menu did not open after a DMV selection")
+        california.tap()
+        XCTAssertTrue(app.buttons.matching(
+            NSPredicate(format: "label == 'Switch coverage area, currently California'")
+        ).firstMatch.waitForExistence(timeout: 5), "could not leave DMV after selecting a precinct")
+    }
+
+    /// The first tap after switching into DMV must work too. This catches a camera or gesture
+    /// state left behind by the previous state's selection flight.
+    func testSwitchIntoDMVThenTapMap() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-hasOnboarded", "YES", "-hapticsEnabled", "NO", "-defaultState", "CA"]
+        app.launch()
+
+        let switcher = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH 'Switch coverage area'")
+        ).firstMatch
+        XCTAssertTrue(switcher.waitForExistence(timeout: 15), "coverage area selector missing")
+        switcher.tap()
+        let dmv = app.buttons["DMV (DC, MD, VA)"].firstMatch
+        XCTAssertTrue(dmv.waitForExistence(timeout: 10), "DMV menu option missing")
+        dmv.tap()
+
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.42)).tap()
+        let hero = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS 'Political lean'"))
+            .firstMatch
+        XCTAssertTrue(hero.waitForExistence(timeout: 10), "first DMV map tap after switching did not resolve")
+    }
+
     /// Requested: compare a precinct to the places around it, not just to the whole state.
     /// The thing worth protecting is that the "vs X" caption always names the area actually
     /// used, so switching the menu has to move the labels with it.
@@ -110,7 +185,7 @@ final class ShareCardUITests: XCTestCase {
         // which outranks anything the app writes to UserDefaults, so the preference would be
         // frozen at the seeded value and the feature would look broken. The test drives the menu
         // in both directions instead, which is also the more honest exercise.
-        app.launchArguments = ["-hasOnboarded", "YES", "-hapticsEnabled", "NO"]
+        app.launchArguments = ["-hasOnboarded", "YES", "-hapticsEnabled", "NO", "-defaultState", "NY"]
         app.launch()
 
         let hero = app.descendants(matching: .any)

@@ -23,6 +23,15 @@ struct SourcesView: View {
             }
 
             Section("Election and redistricting data") {
+                sourceNote(
+                    "Privately supplied DMV dataset",
+                    "Curated precinct boundaries, election results, and demographic fields for Washington, DC, Montgomery and Prince George's Counties, and Northern Virginia. DC election values use 2020. Maryland and Virginia use the source's latest available results."
+                )
+                source(
+                    "DC Open Data",
+                    "Public 2019 Washington, DC precinct boundaries used as geometry controls when preparing the private DMV shapes.",
+                    "https://opendata.dc.gov/"
+                )
                 source(
                     "Dave's Redistricting",
                     "New York, Massachusetts, and Texas election and voting-age population fields. © 2024–2026 Social Good Fund.",
@@ -90,5 +99,15 @@ struct SourcesView: View {
             .padding(.vertical, 2)
         }
         .accessibilityHint("Opens the source website")
+    }
+
+    private func sourceNote(_ title: String, _ detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.subheadline.weight(.semibold))
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 2)
     }
 }

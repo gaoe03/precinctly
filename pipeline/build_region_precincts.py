@@ -206,7 +206,7 @@ class Baseline:
 #    elections: {(office, year): {"dem","rep","other"}}}
 # ---------------------------------------------------------------------------
 
-def adapter_josh(states, src_path):
+def adapter_josh(states, src_path, dc_passthrough=False):
     """Yield SourceRecords from Josh's private DB. Used for CA (and NY verification)."""
     src = sqlite3.connect(f"file:{src_path}?mode=ro&immutable=1", uri=True)
     ph = ",".join("?" * len(states))
@@ -239,6 +239,10 @@ def adapter_josh(states, src_path):
         b = geom.bounds
         if -180 <= b[0] <= 180 and -90 <= b[1] <= 90 and -180 <= b[2] <= 180 and -90 <= b[3] <= 90:
             return geom                          # already lon/lat (e.g., MA)
+        # The private DC source uses a documented only by its control layer local
+        # grid. A DMV merge can request the raw shape and normalize it explicitly.
+        if dc_passthrough and state == "DC":
+            return geom
         crs = STATE_CRS.get(state, 3857)         # NY 3857, CA 3310, default 3857
         if crs not in transformers:
             transformers[crs] = Transformer.from_crs(crs, DST_CRS, always_xy=True).transform

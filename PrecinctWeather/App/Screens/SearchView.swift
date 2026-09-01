@@ -19,6 +19,8 @@ struct SearchView: View {
                "Quincy", "Lowell", "Salem", "Brookline"],
         "TX": ["Austin", "Downtown Houston", "Dallas", "San Antonio",
                "Fort Worth", "El Paso", "Arlington", "Corpus Christi"],
+        "DMV": ["Washington, DC", "Bethesda", "Silver Spring", "Arlington",
+                "Alexandria", "Fairfax", "Reston", "Rockville"],
     ]
 
     private var popularPlaces: [Neighborhood] {
@@ -72,8 +74,8 @@ struct SearchView: View {
                     case .outOfCoverage:
                         noticeView(
                             icon: "mappin.slash",
-                            title: "Outside covered states",
-                            detail: "Precinctly currently covers California, Massachusetts, New York, and Texas. Try another address, or close search to explore the map."
+                            title: "Outside covered areas",
+                            detail: "Precinctly currently covers California, Massachusetts, New York, Texas, and the DMV (Washington, DC, Montgomery and Prince George's Counties, and Northern Virginia). Try another address, or close search to explore the map."
                         ) {
                             Button("Clear search") { query = "" }
                         }
@@ -308,6 +310,7 @@ private final class PlaceSearchModel: NSObject, ObservableObject {
         case "TX": span = .init(latitudeDelta: 11, longitudeDelta: 14)
         case "NY": span = .init(latitudeDelta: 5, longitudeDelta: 6)
         case "MA": span = .init(latitudeDelta: 3, longitudeDelta: 4)
+        case "DMV": span = .init(latitudeDelta: 1.4, longitudeDelta: 1.7)
         default: span = .init(latitudeDelta: 8, longitudeDelta: 8)
         }
         return MKCoordinateRegion(

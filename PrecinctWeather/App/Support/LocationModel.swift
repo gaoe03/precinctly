@@ -5,18 +5,40 @@ import WidgetKit
 import UIKit
 import PrecinctKit
 
-/// A loaded state the user can switch between (each is its own "view").
+/// A loaded coverage region the user can switch between (each is its own view).
 struct AppState: Identifiable {
     let abbr: String; let name: String; let lat: Double; let lon: Double
     var id: String { abbr }
+    init(region: CoverageRegion) {
+        abbr = region.id; name = region.name
+        lat = region.centerLatitude; lon = region.centerLongitude
+    }
+    init(abbr: String, name: String, lat: Double, lon: Double) {
+        self.abbr = abbr; self.name = name; self.lat = lat; self.lon = lon
+    }
 }
 let appStates: [AppState] = [
+    .init(region: .dmvCore),
     .init(abbr: "CA", name: "California",     lat: 34.050, lon: -118.243),  // Downtown LA
     .init(abbr: "MA", name: "Massachusetts",  lat: 42.360, lon: -71.058),   // Boston
     .init(abbr: "NY", name: "New York",       lat: 40.758, lon: -73.985),   // Times Square
     .init(abbr: "TX", name: "Texas",          lat: 29.760, lon: -95.370),   // Houston
 ]
-func stateName(_ abbr: String) -> String { appStates.first { $0.abbr == abbr }?.name ?? abbr }
+func stateName(_ abbr: String) -> String {
+    if abbr == CoverageRegion.dmvCore.id { return CoverageRegion.dmvCore.name }
+    return appStates.first { $0.abbr == abbr }?.name ?? abbr
+}
+
+func coverageRegion(_ id: String) -> CoverageRegion? {
+    if id == CoverageRegion.dmvCore.id { return .dmvCore }
+    guard let state = appStates.first(where: { $0.abbr == id }) else { return nil }
+    return .state(id: state.abbr, name: state.name, latitude: state.lat, longitude: state.lon)
+}
+
+func selectedRegionContains(_ regionID: String, profile: PrecinctProfile) -> Bool {
+    if let region = coverageRegion(regionID) { return region.contains(profile) }
+    return regionID == profile.state
+}
 
 /// Owns Core Location and the current map selection.
 ///
@@ -48,7 +70,7 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
     /// `resolvedBaseline` falls back when the chosen area doesn't exist or is too small here, and
     /// every label is drawn from the resolved baseline so it always names what it actually shows.
     var comparisonPreference: ComparisonArea {
-        get { ComparisonArea(rawValue: UserDefaults.standard.string(forKey: "comparisonArea") ?? "") ?? .state }
+        get { ComparisonArea(rawValue: UserDefaults.standard.string(forKey: "comparisonArea") ?? "") ?? .region }
         set {
             UserDefaults.standard.set(newValue.rawValue, forKey: "comparisonArea")
             if let p = selection { stateBaseline = resolvedBaseline(for: p) }
@@ -77,6 +99,7 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
     private enum SelectionSource { case initial, gps, tap }
     private var selectionSource: SelectionSource = .initial
     private var loadedCounty: String?   // which county's precincts are currently tinted
+    private var countyLoadGeneration = 0 // invalidates polygon decodes from an older state switch
     private var locationServiceStarted = false
     private var didRequestInitialLocation = false
     private var hasManualNavigation = false
@@ -200,9 +223,9 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
             return
         }
         let p = hit.profile
-        if p.state != selectedState {
+        if !selectedRegionContains(selectedState, profile: p) {
             tap(0.4)
-            toast = "Outside \(stateName(selectedState)). That's in \(stateName(p.state)). Switch states from the menu."
+            toast = "Outside \(stateName(selectedState)). That's in \(stateName(p.state)). Switch coverage areas from the menu."
             return
         }
         selectionSource = .tap
@@ -218,7 +241,7 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
         let coord = CLLocationCoordinate2D(latitude: lat, longitude: lon)
         guard let hit = PrecinctDB.shared.lookup(lon: lon, lat: lat) else { return false }
         let p = hit.profile
-        selectedState = p.state
+        selectedState = CoverageRegion.dmvCore.contains(p) ? CoverageRegion.dmvCore.id : p.state
         selectionSource = .tap
         tap()
         loadDetails(p, rings: hit.rings, at: coord)
@@ -232,7 +255,7 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
         cancelAutomaticRecenter()
         guard let hit = PrecinctDB.shared.precinct(unitID: unitID) else { return false }
         let p = hit.profile
-        selectedState = p.state
+        selectedState = CoverageRegion.dmvCore.contains(p) ? CoverageRegion.dmvCore.id : p.state
         selectionSource = .tap
         tap()
         loadDetails(p, rings: hit.rings,
@@ -244,11 +267,35 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
     func switchState(_ abbr: String) {
         cancelAutomaticRecenter()
         guard let st = appStates.first(where: { $0.abbr == abbr }) else { return }
-        selectedState = abbr
+        let destinationHit = abbr == CoverageRegion.dmvCore.id
+            ? nil
+            : PrecinctDB.shared.lookup(lon: st.lon, lat: st.lat)
+        guard abbr == CoverageRegion.dmvCore.id || destinationHit != nil else { return }
         selectionSource = .tap
-        if let hit = PrecinctDB.shared.lookup(lon: st.lon, lat: st.lat) {
+        // Invalidate any county decode already in flight before changing the visible scope. This
+        // prevents a rapid state switch from painting an older county over the new map.
+        countyLoadGeneration &+= 1
+        loadedCounty = nil
+        neighborPins = []
+        // Aggregate regions are navigational map areas, not synthetic DB states.
+        if abbr == CoverageRegion.dmvCore.id {
+            // Do not leave a previously selected NY/CA/MA/TX profile visible while the map is
+            // showing the aggregate DMV area.
+            selection = nil
+            selectionCoord = nil
+            selectionRegion = nil
+            selectedRings = []
+            neighborPins = []
+            comparisonAreas = []
+            stateBaseline = nil
+            presidentTrend = []
+            selectedState = abbr
+        } else if let hit = destinationHit {
+            // Resolve and load the destination before publishing the new state. SwiftUI then
+            // receives one coherent snapshot instead of briefly showing a new pill over old data.
             loadDetails(hit.profile, rings: hit.rings,
                         at: CLLocationCoordinate2D(latitude: st.lat, longitude: st.lon))
+            selectedState = abbr
         }
     }
 
@@ -258,7 +305,7 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
             // Worded so it's also true for covered-state users standing on water.
             if !warnedOutOfCoverage {
                 warnedOutOfCoverage = true
-                toast = "No precinct at your location. Precinctly covers NY, CA, MA, and TX. Tap the map to explore."
+                toast = "No precinct at your location. Precinctly covers \(Coverage.abbrList). Tap the map to explore."
             }
             retryAutomaticRecenterIfNeeded()
             return
@@ -272,7 +319,11 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
         pendingRecenterGeneration = nil
         recenterRetryCount = 0
         selectionSource = .gps
-        if appStates.contains(where: { $0.abbr == p.state }) { selectedState = p.state }
+        if CoverageRegion.dmvCore.contains(p) {
+            selectedState = CoverageRegion.dmvCore.id
+        } else if appStates.contains(where: { $0.abbr == p.state }) {
+            selectedState = p.state
+        }
         loadDetails(p, rings: hit.rings, at: coord)
     }
 
@@ -307,21 +358,31 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
         let countyKey = "\(p.state)|\(p.borough)"   // county names repeat across states (Suffolk NY vs MA)
         if countyKey != loadedCounty {
             loadedCounty = countyKey
+            countyLoadGeneration &+= 1
+            let generation = countyLoadGeneration
             neighborPins = []
-            // The whole county, dissolved into ≈5 lean regions (Solid Rep…Solid Dem) — a handful
-            // of polygons instead of thousands, so the always-on county tint stays smooth even in
-            // LA (~3,000 precincts). Decoded off-main below; newest county wins.
-            let rows = PrecinctDB.shared.countyLeanRegions(state: p.state, county: p.borough)
-            let decodeTask = Task.detached(priority: .userInitiated) {
-                PrecinctDB.makePins(rows)
-            }
+            // Let the selected profile and camera paint before querying the county tint. The
+            // database is main-thread-only, so the query itself cannot move off-main, but yielding
+            // here prevents a large county from blocking the state switch's first frame.
             Task { @MainActor [weak self] in
+                await Task.yield()
+                guard let self,
+                      self.loadedCounty == countyKey,
+                      self.countyLoadGeneration == generation else { return }
+                // The whole county, dissolved into ≈5 lean regions (Solid Rep…Solid Dem) — a
+                // handful of polygons instead of thousands, so the always-on county tint stays
+                // smooth even in LA (~3,000 precincts). Decode off-main below; newest county wins.
+                let rows = PrecinctDB.shared.countyLeanRegions(state: p.state, county: p.borough)
+                let decodeTask = Task.detached(priority: .userInitiated) {
+                    PrecinctDB.makePins(rows)
+                }
                 let pins = await decodeTask.value
                 // Hold the tint until the zoom-to-precinct fly has settled. Rendering hundreds of
                 // polygons mid-animation makes both the fly and the tap feel laggy; this lets the
                 // sheet + selected shape paint instantly and the tint arrive a beat later.
                 try? await Task.sleep(nanoseconds: 280_000_000)
-                guard let self, self.loadedCounty == countyKey else { return }   // a newer county won the race
+                guard self.loadedCounty == countyKey,
+                      self.countyLoadGeneration == generation else { return } // a newer county won the race
                 self.neighborPins = pins
             }
         }

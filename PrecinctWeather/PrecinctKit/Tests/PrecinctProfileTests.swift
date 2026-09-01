@@ -70,6 +70,30 @@ final class PrecinctProfileTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(PrecinctProfile.self, from: encoded), original)
     }
 
+    func testDMVCoreUsesExplicitJurisdictionPrefixesWithoutInventingAState() {
+        XCTAssertEqual(CoverageRegion.dmvCore.id, "DMV")
+        XCTAssertTrue(CoverageRegion.dmvCore.isAggregate)
+        XCTAssertEqual(CoverageRegion.dmvCore.jurisdictions.map(\.code), [
+            "11001", "24031", "24033", "51013", "51510", "51059", "51600",
+            "51610", "51107", "51153", "51683", "51685"
+        ])
+        XCTAssertTrue(CoverageRegion.dmvCore.contains(profile(unitID: "24031-:-001")))
+        XCTAssertTrue(CoverageRegion.dmvCore.contains(profile(unitID: "51685-:-001", state: "VA")))
+        XCTAssertFalse(CoverageRegion.dmvCore.contains(profile(unitID: "24005-:-001")))
+    }
+
+    private func profile(unitID: String, state: String = "MD") -> PrecinctProfile {
+        PrecinctProfile(unitID: unitID, borough: "", state: state, precinctName: nil,
+                        leanLabel: nil, leanDemShare: nil, prevDemShare: nil, leanYear: nil,
+                        prevYear: nil, leanShift: nil, leanVotes: nil, turnoutEst: nil,
+                        popTotal: nil, vapTotal: nil, cvap: nil, pctWhite: nil, pctBlack: nil,
+                        pctHispanic: nil, pctAsian: nil, pctNative: nil, pctPacific: nil,
+                        pctOther: nil, pluralityGroup: nil, pctNoHS: nil, pctHS: nil,
+                        pctBachelors: nil, pctGraduate: nil, pctBachelorsOrHigher: nil,
+                        incomeMedian: nil, popDensity: nil, avgAge: nil, pctRenter: nil,
+                        pctOwner: nil, dataComplete: false)
+    }
+
     private func profile(share: Double?, white: Double? = nil, black: Double? = nil,
                          hispanic: Double? = nil, asian: Double? = nil) -> PrecinctProfile {
         PrecinctProfile(

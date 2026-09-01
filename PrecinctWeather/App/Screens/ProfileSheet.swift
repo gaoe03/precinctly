@@ -91,7 +91,9 @@ struct BottomPanel: View {
                     ShareCardButton(profile: p, rings: model.selectedRings,
                                     trend: model.presidentTrend, baseline: model.stateBaseline)
                         .padding(.trailing, 12)
-                        .padding(.top, 8)
+                        // Keep the 34pt share circle centered in the 28pt handle row. A positive
+                        // top inset put the button noticeably below the grab handle.
+                        .padding(.top, -3)
                         .transition(.opacity)
                 }
             }
@@ -100,6 +102,15 @@ struct BottomPanel: View {
         .sheet(isPresented: $model.showSearch) { SearchView().environmentObject(model) }
         .sheet(isPresented: $model.showSettings) { SettingsView() }
         .fullScreenCover(isPresented: $model.showFunFacts) { FunFactsView().environmentObject(model) }
+        .onChange(of: model.selection) {
+            // Aggregate DMV navigation starts with no selected precinct. If the previous state
+            // left this panel expanded, collapsing it here keeps the map and coverage selector
+            // reachable instead of leaving a blank full-screen panel over them.
+            if model.selection == nil {
+                dragHeight = nil
+                expanded = false
+            }
+        }
     }
 
     // Global coordinate space: the handle moves as the card resizes, so measuring the drag in its
@@ -150,20 +161,12 @@ private struct ProfileContent: View {
     private var baseline: Baseline? { model.stateBaseline }
 
     var body: some View {
-        GeometryReader { geo in
-            ScrollView {
-                content
-                    // Short profiles (a precinct with only two race rows) don't fill the panel,
-                    // which left the source line stranded mid-air with dead space under it.
-                    // Holding the content to at least the viewport height lets the spacer above
-                    // the footnote push it to the bottom where a footnote belongs. Long profiles
-                    // exceed this and are unaffected.
-                    .frame(minHeight: showContent ? geo.size.height : nil, alignment: .top)
-            }
-            // At accessibility sizes the peek hero may still exceed even the taller peek,
-            // so let it scroll instead of clipping the caveat lines.
-            .scrollDisabled(!scrolls && !dts.isAccessibilitySize)
+        ScrollView {
+            content
         }
+        // At accessibility sizes the peek hero may still exceed even the taller peek,
+        // so let it scroll instead of clipping the caveat lines.
+        .scrollDisabled(!scrolls && !dts.isAccessibilitySize)
     }
 
     @Environment(\.dynamicTypeSize) private var dts
@@ -182,11 +185,11 @@ private struct ProfileContent: View {
                         WhoLivesHere(profile: p)
                         MoneyEducation(profile: p, baseline: baseline)
                         MoreStats(profile: p)
-                        Spacer(minLength: 28)
-                        Text("\(p.leanYear.map(String.init) ?? "Latest") presidential vote. 2020 Census and ACS.")
+                        Text("\(p.leanYear.map(String.init) ?? "Latest") presidential vote. Demographics use the 2020 Census and ACS.")
                             .font(.caption2).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .center)
-                            .padding(.bottom, 14)
+                            .padding(.top, 8)
+                            .padding(.bottom, 8)
                     }
                 }
                 .padding(.horizontal).padding(.top, 4)

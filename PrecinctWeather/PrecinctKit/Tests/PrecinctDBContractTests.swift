@@ -57,6 +57,28 @@ final class PrecinctDBContractTests: XCTestCase {
         }
     }
 
+    func testDMVFunFactsAndLeaderboardsUseTheAggregateScope() {
+        let db = PrecinctDB.shared
+        let facts = db.funFacts(region: .dmvCore)
+        XCTAssertGreaterThan(facts.count, 10)
+        XCTAssertEqual(Set(facts.map(\.category)), Set(FactCategory.allCases))
+
+        for fact in facts {
+            if let unitID = fact.unitID {
+                XCTAssertTrue(CoverageRegion.dmvCore.contains(db.precinct(unitID: unitID)!.profile))
+            }
+            if let spec = fact.leaderboard {
+                let rows = db.topPrecincts(spec)
+                XCTAssertFalse(rows.isEmpty, "Empty DMV leaderboard for \(fact.id)")
+                XCTAssertEqual(rows.first?.id, fact.unitID, "DMV winner mismatch for \(fact.id)")
+                XCTAssertTrue(rows.allSatisfy {
+                    guard let hit = db.precinct(unitID: $0.id) else { return false }
+                    return CoverageRegion.dmvCore.contains(hit.profile)
+                })
+            }
+        }
+    }
+
     func testPublicLimitsRejectUnboundedAndNonPositiveRequests() throws {
         let db = PrecinctDB.shared
         XCTAssertTrue(db.countyRows(state: "CA", county: "Los Angeles", lon: -118.24, lat: 34.05, limit: 0).isEmpty)
@@ -114,7 +136,7 @@ final class PrecinctDBContractTests: XCTestCase {
                 database,
                 "SELECT group_concat(state, ',') FROM (SELECT DISTINCT state FROM precincts ORDER BY state)"
             ),
-            "CA,MA,NY,TX"
+            "CA,DC,MA,MD,NY,TX,VA"
         )
         let precinctCount = try intScalar(database, "SELECT count(*) FROM precincts")
         XCTAssertGreaterThan(precinctCount, 0)

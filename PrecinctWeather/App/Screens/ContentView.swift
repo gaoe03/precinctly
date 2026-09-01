@@ -57,6 +57,11 @@ struct ContentView: View {
                 beginSelectionFlight(to: r)
             }
         }
+        .onChange(of: model.selectedState) {
+            if model.selection == nil {
+                camera = .region(initialRegion(for: model.selectedState))
+            }
+        }
         .task {
             #if DEBUG   // export the full By-the-Numbers page to a tall PNG for the website asset
             if ProcessInfo.processInfo.arguments.contains("-searchSelfTest") {
@@ -126,6 +131,22 @@ struct ContentView: View {
                 if let spec = bkFacts.first(where: { $0.leaderboard != nil })?.leaderboard {
                     let rows = db.topPrecincts(spec)
                     check("Brooklyn '\(spec.title)' leaderboard non-empty (got \(rows.count))", !rows.isEmpty)
+                }
+                let greaterWashington = db.scopeOverview(region: .dmvCore)
+                check("DMV overview covers 1310 precincts (got \(greaterWashington.precinctCount))", greaterWashington.precinctCount == 1310)
+                check("DMV population is present", (greaterWashington.totalPopulation ?? 0) > 5_000_000)
+                check("DMV lean distribution is present", !greaterWashington.leanBuckets.isEmpty)
+                let dmvFacts = db.funFacts(region: .dmvCore)
+                check("DMV facts cover all categories (got \(dmvFacts.count))", Set(dmvFacts.map(\.category)) == Set(FactCategory.allCases))
+                if let dmvSpec = dmvFacts.first(where: { $0.leaderboard != nil })?.leaderboard {
+                    let dmvRows = db.topPrecincts(dmvSpec)
+                    check("DMV leaderboard is populated (got \(dmvRows.count))", !dmvRows.isEmpty)
+                    check("DMV leaderboard rows stay in region", dmvRows.allSatisfy { db.precinct(unitID: $0.id).map { CoverageRegion.dmvCore.contains($0.profile) } ?? false })
+                }
+                for state in ["DC", "MD", "VA"] {
+                    let stateOverview = db.scopeOverview(state: state)
+                    check("\(state) By the Numbers overview is populated", stateOverview.precinctCount > 0 && stateOverview.totalPopulation != nil)
+                    check("\(state) facts are populated", !db.funFacts(state: state).isEmpty)
                 }
                 let caFacts = db.funFacts(state: "CA")
                 check("CA facts (got \(caFacts.count))", caFacts.count > 10)
@@ -253,7 +274,7 @@ struct ContentView: View {
                     Spacer(minLength: 12)
                     actionControls
                 }
-                stateSelector(width: 126)   // fits "Massachusetts" without truncating
+                stateSelector(width: 174)   // fits the longest coverage-area label without truncating
             }
             .frame(height: 44)
         }
@@ -263,7 +284,7 @@ struct ContentView: View {
         Menu {
             ForEach(appStates) { st in
                 Button {
-                    withAnimation { model.switchState(st.abbr) }
+                    model.switchState(st.abbr)
                 } label: {
                     if model.selectedState == st.abbr {
                         Label(st.name, systemImage: "checkmark")
@@ -273,7 +294,7 @@ struct ContentView: View {
                 }
             }
             Divider()
-            Button("More states soon") {}.disabled(true)
+            Button("More coverage areas soon") {}.disabled(true)
         } label: {
             controlChrome(
                 HStack(spacing: 4) {
@@ -283,10 +304,10 @@ struct ContentView: View {
                 }
                 .padding(.horizontal, 16)
                 // Matches the 44pt icon controls so the whole top row sits on one line.
-                .frame(height: 44)
+                .frame(width: width, height: 44)
             )
         }
-        .accessibilityLabel("Switch state, currently \(stateName(model.selectedState))")
+        .accessibilityLabel("Switch coverage area, currently \(stateName(model.selectedState))")
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
     }
 
@@ -358,7 +379,8 @@ struct ContentView: View {
     private func initialRegion(for abbr: String) -> MKCoordinateRegion {
         let st = appStates.first { $0.abbr == abbr } ?? appStates[0]
         return MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: st.lat, longitude: st.lon),
-                                  span: MKCoordinateSpan(latitudeDelta: 0.55, longitudeDelta: 0.55))
+                                  span: MKCoordinateSpan(latitudeDelta: abbr == CoverageRegion.dmvCore.id ? 0.72 : 0.55,
+                                                          longitudeDelta: abbr == CoverageRegion.dmvCore.id ? 0.86 : 0.55))
     }
 }
 

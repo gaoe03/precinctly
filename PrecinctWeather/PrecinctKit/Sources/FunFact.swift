@@ -64,6 +64,7 @@ public struct LeaderboardSpec: Hashable, Identifiable, Sendable {
     public let note: String           // honest header (why they tie at a cap, or just "the top precincts here")
     public let state: String
     public let county: String?
+    public let unitIDPrefixes: [String]
     public let valueColumn: String    // column shown per row (e.g. "income_median", "pct_renter")
     public let orderExpr: String      // SQL expression to rank by (usually == valueColumn)
     public let baseFilter: String     // the fact's own size/sanity filter, e.g. "pop_total >= 500"
@@ -75,9 +76,9 @@ public struct LeaderboardSpec: Hashable, Identifiable, Sendable {
 
     public init(factID: String, title: String, note: String, state: String, county: String?,
                 valueColumn: String, orderExpr: String? = nil, baseFilter: String,
-                ascending: Bool, displayKind: ValueKind) {
+                ascending: Bool, displayKind: ValueKind, unitIDPrefixes: [String] = []) {
         self.factID = factID; self.title = title; self.note = note
-        self.state = state; self.county = county
+        self.state = state; self.county = county; self.unitIDPrefixes = unitIDPrefixes
         self.valueColumn = valueColumn; self.orderExpr = orderExpr ?? valueColumn
         self.baseFilter = baseFilter; self.ascending = ascending; self.displayKind = displayKind
     }

@@ -4,9 +4,83 @@ import Foundation
 /// Settings, the widget placeholder) read these, so adding a state is a one-line change.
 public enum Coverage {
     /// Abbreviated list for tight surfaces (toasts, widgets).
-    public static let abbrList = "NY, CA, MA, and TX"
+    public static let abbrList = "NY, CA, MA, TX, and DMV (DC, MD, VA)"
     /// Full-name sentence for calm surfaces (onboarding, Settings).
-    public static let namesSentence = "Precinctly covers New York, California, Massachusetts, and Texas, with more states coming."
+    public static let namesSentence = "Precinctly covers New York, California, Massachusetts, Texas, and the DMV (Washington, DC, Montgomery and Prince George's Counties, and Northern Virginia)."
+}
+
+/// A map/data coverage area. Most areas are backed by one state column in the
+/// database. The DMV is an explicit multi-jurisdiction area and must never
+/// be queried as if `state = "DMV"` were a real state row.
+public struct CoverageRegion: Identifiable, Equatable, Sendable {
+    public struct Jurisdiction: Equatable, Sendable {
+        public let code: String
+        public let label: String
+        public let state: String
+        public init(code: String, label: String, state: String) {
+            self.code = code; self.label = label; self.state = state
+        }
+    }
+
+    public let id: String
+    public let name: String
+    public let shortName: String
+    public let centerLatitude: Double
+    public let centerLongitude: Double
+    public let spanLatitude: Double
+    public let spanLongitude: Double
+    public let jurisdictions: [Jurisdiction]
+
+    public var isAggregate: Bool { jurisdictions.count > 1 }
+
+    public init(id: String, name: String, shortName: String,
+                centerLatitude: Double, centerLongitude: Double,
+                spanLatitude: Double, spanLongitude: Double,
+                jurisdictions: [Jurisdiction]) {
+        self.id = id; self.name = name; self.shortName = shortName
+        self.centerLatitude = centerLatitude; self.centerLongitude = centerLongitude
+        self.spanLatitude = spanLatitude; self.spanLongitude = spanLongitude
+        self.jurisdictions = jurisdictions
+    }
+
+    public static let dmvCore = CoverageRegion(
+        id: "DMV", name: "DMV (DC, MD, VA)", shortName: "DMV (DC, MD, VA)",
+        centerLatitude: 38.9072, centerLongitude: -77.0369,
+        spanLatitude: 0.72, spanLongitude: 0.86,
+        jurisdictions: [
+            .init(code: "11001", label: "Washington, DC", state: "DC"),
+            .init(code: "24031", label: "Montgomery County", state: "MD"),
+            .init(code: "24033", label: "Prince George's County", state: "MD"),
+            .init(code: "51013", label: "Arlington County", state: "VA"),
+            .init(code: "51510", label: "Alexandria city", state: "VA"),
+            .init(code: "51059", label: "Fairfax County", state: "VA"),
+            .init(code: "51600", label: "Fairfax city", state: "VA"),
+            .init(code: "51610", label: "Falls Church city", state: "VA"),
+            .init(code: "51107", label: "Loudoun County", state: "VA"),
+            .init(code: "51153", label: "Prince William County", state: "VA"),
+            .init(code: "51683", label: "Manassas city", state: "VA"),
+            .init(code: "51685", label: "Manassas Park city", state: "VA")
+        ])
+
+    /// True when a profile's Census/FIPS-prefixed unit id belongs to this area.
+    /// The prefix check keeps the aggregate independent of a synthetic DMV state.
+    public func contains(_ profile: PrecinctProfile) -> Bool {
+        guard isAggregate else { return jurisdictions.first?.state == profile.state }
+        return jurisdictions.contains { j in
+            guard profile.state == j.state else { return false }
+            let ids = [profile.unitID, profile.precinctName ?? ""]
+            return ids.contains { id in
+                id == j.code || id.hasPrefix(j.code + "-") || id.hasPrefix(j.code + ":")
+            }
+        }
+    }
+
+    public static func state(id: String, name: String, latitude: Double, longitude: Double) -> CoverageRegion {
+        CoverageRegion(id: id, name: name, shortName: id,
+                       centerLatitude: latitude, centerLongitude: longitude,
+                       spanLatitude: 0.55, spanLongitude: 0.55,
+                       jurisdictions: [.init(code: id, label: name, state: id)])
+    }
 }
 
 /// Precinct names from state files are often zero-padded ids ("000056" in NY/TX). Strip the
@@ -40,7 +114,8 @@ public func precinctHeadline(_ p: PrecinctProfile) -> String {
 /// awkward name, e.g. "Brooklyn County" instead of Kings County).
 public func countyDisplay(_ borough: String) -> String {
     let nycBoroughs: Set<String> = ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"]
-    guard !borough.isEmpty, !nycBoroughs.contains(borough) else { return borough }
+    let districtLabels: Set<String> = ["District of Columbia"]
+    guard !borough.isEmpty, !nycBoroughs.contains(borough), !districtLabels.contains(borough) else { return borough }
     let lower = borough.lowercased()
     guard !lower.hasSuffix("county"), !lower.hasSuffix("city"), !lower.hasSuffix("borough") else { return borough }
     return "\(borough) County"
@@ -172,10 +247,12 @@ public struct ElectionResult: Codable, Sendable, Identifiable {
 /// rows keep their bare abbreviation so nothing that already reads `baseline(scope: p.state)`
 /// changes meaning.
 public enum ComparisonArea: String, Codable, CaseIterable, Sendable {
-    case state, county, metro
+    case region, state, county, metro
 
     public func scopeKey(for profile: PrecinctProfile) -> String? {
         switch self {
+        case .region:
+            return CoverageRegion.dmvCore.contains(profile) ? "region|DMV" : nil
         case .state:  return profile.state
         case .county: return "county|\(profile.state)|\(profile.borough)"
         case .metro:  return Metro.containing(profile).map { "metro|\(profile.state)|\($0)" }
@@ -219,6 +296,8 @@ public struct Baseline: Codable, Sendable {
     public let pctRenter: Double?
     public let avgAge: Double?
     public let leanDemShare: Double?
+    /// Population total for aggregate scopes when the baseline table provides it.
+    public let popTotal: Int?
     /// How many precincts the area covers. Drives `isMeaningful`.
     public let precinctCount: Int?
     /// Short form for the "vs X" labels: "NY", "Brooklyn", "NYC". Deliberately terse, these sit
@@ -229,18 +308,19 @@ public struct Baseline: Codable, Sendable {
     public init(scope: String, pctWhite: Double?, pctBlack: Double?, pctHispanic: Double?,
                 pctAsian: Double?, pctBachelorsOrHigher: Double?, incomeMedian: Int?,
                 pctRenter: Double?, avgAge: Double?, leanDemShare: Double?,
-                precinctCount: Int? = nil) {
+                precinctCount: Int? = nil, popTotal: Int? = nil) {
         self.scope = scope; self.pctWhite = pctWhite; self.pctBlack = pctBlack
         self.pctHispanic = pctHispanic; self.pctAsian = pctAsian
         self.pctBachelorsOrHigher = pctBachelorsOrHigher; self.incomeMedian = incomeMedian
         self.pctRenter = pctRenter; self.avgAge = avgAge; self.leanDemShare = leanDemShare
-        self.precinctCount = precinctCount
+        self.precinctCount = precinctCount; self.popTotal = popTotal
     }
 
     /// "NY" stays as-is, "county|NY|Brooklyn" becomes "Brooklyn", "metro|NY|New York City"
     /// becomes "NYC" because the full name is too long to sit in a stat caption.
     static func shortName(for scope: String) -> String {
         let parts = scope.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+        if parts.first == "region" { return parts.dropFirst().joined(separator: "|") == "DMV" ? "DMV (DC, MD, VA)" : parts.dropFirst().joined(separator: "|") }
         guard parts.count == 3 else { return scope }
         if parts[0] == "metro" { return parts[2] == "New York City" ? "NYC" : parts[2] }
         return parts[2]

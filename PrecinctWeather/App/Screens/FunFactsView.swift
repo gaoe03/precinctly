@@ -31,6 +31,14 @@ struct FunFactsView: View {
         facts = []; overview = nil; loading = true
         await Task.yield()                            // let the page (menu + spinner) paint first
         guard scopeKey == key else { return }
+        if let region = coverageRegion(state), region.isAggregate {
+            let o = PrecinctDB.shared.scopeOverview(region: region)
+            let f = PrecinctDB.shared.funFacts(region: region)
+            guard scopeKey == key else { return }
+            facts = f; overview = o; loading = false
+            cache[key] = (f, o)
+            return
+        }
         let f = PrecinctDB.shared.funFacts(state: state, county: c)
         await Task.yield()
         guard scopeKey == key else { return }
@@ -61,7 +69,16 @@ struct FunFactsView: View {
                     let items = funFactRowItems(facts.filter { $0.category == cat })
                     if !items.isEmpty {
                         Section {
-                            ForEach(items) { item in rowView(item) }
+                            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                                VStack(spacing: 0) {
+                                    rowView(item)
+                                    if index < items.count - 1 {
+                                        Divider().padding(.top, 6)
+                                    }
+                                }
+                                .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
+                                .listRowSeparator(.hidden)
+                            }
                         } header: {
                             Text(cat.title)
                                 .font(.serifDisplay(15, .semibold)).foregroundStyle(.primary).textCase(nil)
@@ -69,14 +86,14 @@ struct FunFactsView: View {
                     }
                 }
 
-                if facts.isEmpty && !loading {
+                if facts.isEmpty && !loading && overview == nil {
                     Text("No ranked precincts in this area.")
                         .font(.subheadline).foregroundStyle(.secondary)
                         .listRowBackground(Color.clear)
                 }
 
                 Section {
-                    Text("Latest presidential vote. 2020 Census and ACS.")
+                    Text("2024 presidential results where available. DC uses 2020. Demographics use the 2020 Census and ACS.")
                         .font(.caption2).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .center)
                         .listRowBackground(Color.clear).listRowSeparator(.hidden)
@@ -115,7 +132,8 @@ struct FunFactsView: View {
         }
         .task(id: model.selectedState) {
             county = nil
-            counties = PrecinctDB.shared.counties(state: model.selectedState)
+            counties = coverageRegion(model.selectedState)?.isAggregate == true
+                ? [] : PrecinctDB.shared.counties(state: model.selectedState)
         }
         .task(id: scopeKey) {
             await load()
@@ -140,18 +158,30 @@ struct FunFactsView: View {
         model.showFunFacts = false
     }
 
+    @ViewBuilder
     private var scopeRow: some View {
-        Button { showCountyPicker = true } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "line.3.horizontal.decrease.circle.fill").foregroundStyle(.tint)
-                Text(county.map { countyDisplay($0) } ?? "All of \(stateName(model.selectedState))")
-                    .fontWeight(.semibold).foregroundStyle(.primary).lineLimit(1)
-                Spacer()
+        let isAggregate = coverageRegion(model.selectedState)?.isAggregate == true
+        let label = HStack(spacing: 10) {
+            Image(systemName: "line.3.horizontal.decrease.circle.fill").foregroundStyle(.tint)
+            Text(county.map { countyDisplay($0) } ?? "All of \(stateName(model.selectedState))")
+                .fontWeight(.semibold).foregroundStyle(.primary).lineLimit(1)
+            Spacer()
+            if !isAggregate {
                 Image(systemName: "chevron.up.chevron.down").font(.caption).foregroundStyle(.secondary)
             }
-            .contentShape(Rectangle())
         }
-        .accessibilityHint("Choose a county")
+        .contentShape(Rectangle())
+
+        if isAggregate {
+            label
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Coverage area \(stateName(model.selectedState))")
+        } else {
+            Button { showCountyPicker = true } label: { label }
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityHint("Choose a county")
+        }
     }
 }
 
@@ -244,7 +274,57 @@ func funFactRowItems(_ facts: [FunFact]) -> [RowItem] {
     return items
 }
 
-private func shortPlace(_ p: String) -> String { p.components(separatedBy: " (").first ?? p }
+/// Keep ranked-place labels readable in narrow rows. County and city suffixes add no
+/// information once the state is shown, and the DMV's full jurisdiction names otherwise
+/// force the useful precinct label into an ellipsis.
+private func compactPlace(_ place: String) -> String {
+    let placePieces = place.components(separatedBy: " (")
+    let head = placePieces.first ?? place
+    let pieces = head.split(separator: ",", maxSplits: 1, omittingEmptySubsequences: false)
+    guard pieces.count == 2 else { return place }
+    let rawLocality = pieces[0].trimmingCharacters(in: .whitespaces)
+    var locality = pieces[0].trimmingCharacters(in: .whitespaces)
+    if locality == "District of Columbia" { locality = "DC" }
+    for suffix in [" County", " borough"] where locality.hasSuffix(suffix) {
+        locality.removeLast(suffix.count)
+        break
+    }
+    let state = pieces[1].trimmingCharacters(in: .whitespaces)
+    guard placePieces.count > 1 else {
+        return locality == "DC" && state == "DC" ? "DC" : "\(locality), \(state)"
+    }
+    var identifier = placePieces.dropFirst().joined(separator: " (")
+        .replacingOccurrences(of: ")", with: "")
+    if identifier.hasPrefix("\(rawLocality) ") {
+        identifier.removeFirst(rawLocality.count + 1)
+    }
+    identifier = identifier.replacingOccurrences(of: "Precinct ", with: "")
+    let base = locality == "DC" && state == "DC" ? "DC" : "\(locality), \(state)"
+    return identifier.isEmpty ? base : "\(base) (\(identifier))"
+}
+
+private func shortPlace(_ p: String) -> String {
+    let compact = compactPlace(p)
+    guard let open = compact.range(of: " ("),
+                                  let close = compact.lastIndex(of: ")"),
+                                  close > open.upperBound else { return compact }
+    // Facility names and precinct codes add noise at this width. Keep the comparison label to
+    // the jurisdiction, and leave the exact winning precinct in the profile and accessibility
+    // label where it can be read without competing with the range itself.
+    return String(compact[..<open.lowerBound])
+}
+
+/// Fact rows have a fixed visual height. Keep a short precinct identifier when it helps, but
+/// leave unusually long facility names to the profile and accessibility label instead of growing
+/// the row or introducing an ellipsis.
+private func factPlace(_ place: String) -> String {
+    let compact = compactPlace(place)
+    guard let open = compact.range(of: " ("),
+                                  let close = compact.lastIndex(of: ")"),
+                                  close > open.upperBound else { return compact }
+    let identifier = compact[open.upperBound..<close]
+    return identifier.count > 20 ? String(compact[..<open.lowerBound]) : compact
+}
 
 // MARK: - Components
 
@@ -333,7 +413,7 @@ private struct SeeAllChip: View {
         // name truncates instead, which it is already set up to do.
         .lineLimit(1)
         .fixedSize()
-        .padding(.horizontal, 8).padding(.vertical, 3)
+        .padding(.horizontal, 7).padding(.vertical, 2)
         .background(Color(.tertiarySystemFill), in: Capsule())
     }
 }
@@ -346,20 +426,22 @@ private struct FactRow: View {
     var onSeeAll: (LeaderboardSpec) -> Void = { _ in }
 
     var body: some View {
-        accessibleRow(HStack(spacing: 12) {
+        accessibleRow(HStack(alignment: .center, spacing: 12) {
             Image(systemName: fact.icon).font(.body).foregroundStyle(factTint(fact))
                 .frame(width: 34, height: 34)
                 .background(Color(.tertiarySystemFill), in: Circle())
             VStack(alignment: .leading, spacing: 2) {
-                Text(fact.title).font(.subheadline.weight(.semibold)).lineLimit(2)
+                Text(fact.title).font(.headline.weight(.semibold)).lineLimit(1)
                 if let sub = fact.subtitle {
                     Text(sub).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                 }
-                Text(fact.place).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(factPlace(fact.place)).font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(1).minimumScaleFactor(0.85).allowsTightening(true)
+                    .accessibilityLabel(fact.place)
             }
             .layoutPriority(1)
             Spacer(minLength: 10)
-            VStack(alignment: .trailing, spacing: 5) {
+            VStack(alignment: .trailing, spacing: 4) {
                 Text(fact.value).font(.headline.bold().monospacedDigit())
                     .lineLimit(1).fixedSize()
                 if let lb = fact.leaderboard {
@@ -407,46 +489,63 @@ private struct RangeRow: View {
         }
     }
     private var partisan: Bool { pairKey == "lean" || pairKey == "shift" }
+    private var leftFact: FunFact { partisan ? high : low }
+    private var rightFact: FunFact { partisan ? low : high }
     private func valueColor(_ f: FunFact) -> Color { partisan ? factTint(f) : .primary }
-    // Partisan pairs read as a red→blue spectrum (the color IS the meaning). Neutral metrics
-    // (income, age, college) get a low→high intensity ramp — light on the low end, dark on the
-    // high — so the track signals which way the variable grows instead of being flat gray.
-    private var track: LinearGradient {
-        partisan
-            ? LinearGradient(colors: [Palette.lean(0.12), Palette.lean(0.5), Palette.lean(0.88)],
-                             startPoint: .leading, endPoint: .trailing)
-            : LinearGradient(colors: [Palette.rankTint(4), Palette.rankTint(0)],
-                             startPoint: .leading, endPoint: .trailing)
+    // The partisan track carries meaning: Democratic is always on the left and Republican on
+    // the right, with the center rule marking an even split. The other metrics only need a quiet
+    // connector between their low and high endpoints; a color ramp would imply a scale we do not
+    // actually encode in the row.
+    @ViewBuilder
+    private var connector: some View {
+        if partisan {
+            ZStack {
+                HStack(spacing: 1) {
+                    Palette.dem
+                    Palette.rep
+                }
+                .frame(height: 5)
+                .clipShape(Capsule())
+                Rectangle()
+                    .fill(Color(.systemBackground).opacity(0.95))
+                    .frame(width: 2, height: 9)
+                    .accessibilityHidden(true)
+            }
+        } else {
+            Rectangle()
+                .fill(Color.secondary.opacity(0.34))
+                .frame(height: 1)
+        }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            Text(label).font(.subheadline.weight(.semibold))
-            HStack(alignment: .center, spacing: 12) {
-                endpoint(low, align: .leading)
-                ZStack {
-                    Capsule().fill(track).frame(height: 5)
-                    Image(systemName: "chevron.compact.right")
-                        .font(.caption2.weight(.bold)).foregroundStyle(.white.opacity(0.9))
-                }
-                .frame(maxWidth: .infinity)
-                endpoint(high, align: .trailing)
+        VStack(alignment: .leading, spacing: 8) {
+            Text(label).font(.headline.weight(.semibold))
+            HStack(alignment: .center, spacing: 10) {
+                endpoint(leftFact)
+                connector
+                .frame(width: 150)
+                endpoint(rightFact)
             }
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 4)
     }
 
-    private func endpoint(_ f: FunFact, align: HorizontalAlignment) -> some View {
+    private func endpoint(_ f: FunFact) -> some View {
         Button { onTap(f) } label: {
-            VStack(alignment: align, spacing: 2) {
+            VStack(alignment: .center, spacing: 2) {
                 Text(f.value).font(.headline.bold().monospacedDigit()).foregroundStyle(valueColor(f))
                     .lineLimit(1).fixedSize()
                 Text(shortPlace(f.place)).font(.caption2).foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .frame(maxWidth: 116, alignment: align == .leading ? .leading : .trailing)
+                    .minimumScaleFactor(0.82).allowsTightening(true)
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
+            .frame(maxWidth: .infinity, alignment: .center)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("\(f.value), \(f.place)")
+        .accessibilityHint("Double-tap to view this precinct")
     }
 }
 
@@ -460,7 +559,7 @@ private struct TenureRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            Text("Home tenure").font(.subheadline.weight(.semibold))
+            Text("Home tenure").font(.headline.weight(.semibold))
             HStack(spacing: 12) {
                 stat(renter, noun: "renter")
                 Divider().frame(height: 36)
@@ -588,6 +687,10 @@ private struct PrecinctLeaderboard: View {
     }
 
     private func place(_ r: LeaderRow) -> String {
+        compactPlace(fullPlace(r))
+    }
+
+    private func fullPlace(_ r: LeaderRow) -> String {
         let c = countyDisplay(r.borough)
         return r.precinctName.isEmpty ? "\(c), \(r.state)" : "\(c), \(r.state) (\(precinctDisplayName(r.precinctName)))"
     }
@@ -599,7 +702,8 @@ private struct PrecinctLeaderboard: View {
                     .foregroundStyle(.secondary).frame(width: 24, alignment: .trailing)
             }
             Text(place(r)).font(.subheadline).foregroundStyle(.primary)
-                .lineLimit(1).truncationMode(.tail)
+                .lineLimit(1).minimumScaleFactor(0.75).allowsTightening(true)
+                .accessibilityLabel(fullPlace(r))
             Spacer(minLength: 12)
             if !saturated {
                 Text(valueText(r.value)).font(.subheadline.bold().monospacedDigit())
@@ -699,7 +803,7 @@ struct ByNumbersExport: View {
                         }
                     }
                 }
-                Text("Latest presidential vote. 2020 Census and ACS.")
+                Text("2024 presidential results where available. DC uses 2020. Demographics use the 2020 Census and ACS.")
                     .font(.caption2).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
             }

@@ -7,9 +7,9 @@ import XCTest
 /// because those differ wherever the county is too small to mean anything.
 final class ComparisonAreaTests: XCTestCase {
 
-    private func profile(state: String, borough: String, name: String? = "1") -> PrecinctProfile {
+    private func profile(state: String, borough: String, name: String? = "1", unitID: String? = nil) -> PrecinctProfile {
         PrecinctProfile(
-            unitID: "\(state)-\(borough)-\(name ?? "x")", borough: borough, state: state,
+            unitID: unitID ?? "\(state)-\(borough)-\(name ?? "x")", borough: borough, state: state,
             precinctName: name,
             leanLabel: nil, leanDemShare: 0.5, prevDemShare: nil,
             leanYear: 2024, prevYear: nil, leanShift: nil, leanVotes: 500, turnoutEst: 0.4,
@@ -34,6 +34,23 @@ final class ComparisonAreaTests: XCTestCase {
         XCTAssertEqual(ComparisonArea.state.scopeKey(for: brooklyn), "NY")
         XCTAssertEqual(ComparisonArea.county.scopeKey(for: brooklyn), "county|NY|Brooklyn")
         XCTAssertEqual(ComparisonArea.metro.scopeKey(for: brooklyn), "metro|NY|New York City")
+    }
+
+    func testDMVCoreUsesAnExplicitRegionScopeAndNeverPretendsToBeAState() {
+        let dc = profile(state: "DC", borough: "District of Columbia", name: "0001", unitID: "11001-0001")
+        XCTAssertEqual(ComparisonArea.region.scopeKey(for: dc), "region|DMV")
+        XCTAssertEqual(ComparisonArea.state.scopeKey(for: dc), "DC")
+
+        let texas = profile(state: "TX", borough: "Harris", name: "48001-0001")
+        XCTAssertNil(ComparisonArea.region.scopeKey(for: texas))
+        XCTAssertTrue(CoverageRegion.dmvCore.contains(dc))
+        XCTAssertFalse(CoverageRegion.dmvCore.contains(texas))
+    }
+
+    func testDMVRegionDisplayNameIsCompactAndStable() {
+        XCTAssertEqual(baseline("region|DMV", precincts: 100).displayName, "DMV (DC, MD, VA)")
+        XCTAssertEqual(CoverageRegion.dmvCore.shortName, "DMV (DC, MD, VA)")
+        XCTAssertTrue(CoverageRegion.dmvCore.isAggregate)
     }
 
     func testOnlyTheFiveBoroughsBelongToTheNewYorkCityMetro() {

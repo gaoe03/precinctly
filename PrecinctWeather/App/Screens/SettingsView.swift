@@ -1,7 +1,7 @@
 import SwiftUI
 import PrecinctKit
 
-/// General app settings: appearance, map look, default state, version.
+/// General app settings: appearance, map look, default coverage area, version.
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("appearanceMode") private var appearanceMode = "auto"
@@ -58,7 +58,7 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Picker("Default state", selection: $defaultState) {
+                    Picker("Default coverage area", selection: $defaultState) {
                         ForEach(appStates) { Text($0.name).tag($0.abbr) }
                     }
                     Toggle("Haptic feedback", isOn: $hapticsEnabled)

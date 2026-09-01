@@ -21,7 +21,7 @@ final class BaselineContractTests: XCTestCase {
     ]
 
     func testEveryCoveredStateStillHasItsBaseline() {
-        for state in ["NY", "CA", "MA", "TX"] {
+        for state in ["NY", "CA", "MA", "TX", "DC", "MD", "VA"] {
             let base = db.baseline(scope: state)
             XCTAssertNotNil(base, "missing state baseline for \(state)")
             XCTAssertEqual(base?.displayName, state)
@@ -35,6 +35,23 @@ final class BaselineContractTests: XCTestCase {
         XCTAssertNotNil(db.baseline(scope: "county|TX|Harris"))
         XCTAssertNotNil(db.baseline(scope: "metro|NY|New York City"))
         XCTAssertNil(db.baseline(scope: "county|NY|Nowhere"), "an unknown county should not resolve")
+    }
+
+    func testDMVAggregateBaselineIsPersistedAsARegionScope() {
+        guard let baseline = db.baseline(scope: "region|DMV") else {
+            return XCTFail("missing persisted DMV region baseline")
+        }
+        XCTAssertGreaterThan(baseline.precinctCount ?? 0, 0)
+        XCTAssertGreaterThan(baseline.popTotal ?? 0, 0)
+        XCTAssertEqual(baseline.displayName, "DMV (DC, MD, VA)")
+    }
+
+    func testGreaterWashingtonByNumbersOverviewAggregatesAllJurisdictions() {
+        let overview = db.scopeOverview(region: .dmvCore)
+        XCTAssertEqual(overview.precinctCount, 1310)
+        XCTAssertGreaterThan(overview.totalPopulation ?? 0, 5_000_000)
+        XCTAssertNotNil(overview.avgDemShare)
+        XCTAssertGreaterThan(overview.leanBuckets.reduce(0) { $0 + $1.count }, 100)
     }
 
     /// The whole point of recomputing every scope with one method: a county and its state have to

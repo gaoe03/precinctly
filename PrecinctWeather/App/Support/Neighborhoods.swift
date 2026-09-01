@@ -142,6 +142,17 @@ let searchPlaces: [Neighborhood] = [
     .init(name: "Springfield", borough: "Massachusetts", state: "MA", lat: 42.101, lon: -72.590),
     .init(name: "Lowell", borough: "Massachusetts", state: "MA", lat: 42.633, lon: -71.316),
     .init(name: "Salem", borough: "Massachusetts", state: "MA", lat: 42.519, lon: -70.898),
+    // The DMV spans DC, two Maryland counties, and nine Northern Virginia jurisdictions.
+    .init(name: "Washington, DC", borough: "District of Columbia", state: "DMV", lat: 38.907, lon: -77.037),
+    .init(name: "Bethesda", borough: "Montgomery County", state: "DMV", lat: 38.985, lon: -77.094),
+    .init(name: "Silver Spring", borough: "Montgomery County", state: "DMV", lat: 38.990, lon: -77.026),
+    .init(name: "Rockville", borough: "Montgomery County", state: "DMV", lat: 39.084, lon: -77.153),
+    .init(name: "College Park", borough: "Prince George's County", state: "DMV", lat: 38.980, lon: -76.937),
+    .init(name: "Arlington", borough: "Arlington County", state: "DMV", lat: 38.881, lon: -77.091),
+    .init(name: "Alexandria", borough: "Alexandria city", state: "DMV", lat: 38.805, lon: -77.047),
+    .init(name: "Fairfax", borough: "Fairfax County", state: "DMV", lat: 38.846, lon: -77.306),
+    .init(name: "Reston", borough: "Fairfax County", state: "DMV", lat: 38.958, lon: -77.358),
+    .init(name: "Manassas", borough: "Manassas city", state: "DMV", lat: 38.750, lon: -77.475),
     // Texas
     .init(name: "Downtown Houston", borough: "Harris County", state: "TX", lat: 29.760, lon: -95.370),
     .init(name: "Montrose", borough: "Houston", state: "TX", lat: 29.744, lon: -95.390),

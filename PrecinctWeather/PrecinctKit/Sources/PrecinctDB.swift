@@ -252,13 +252,15 @@ public final class PrecinctDB {
     }
 
     public func baseline(scope: String) -> Baseline? {
-        // precinct_count is read through a subselect on the table's own columns so this still
-        // works against a DB built before apply_area_baselines.py added the column.
+        // Optional columns keep this reader compatible with older locally-built bundles.
         let hasCount = columnExists("baselines", "precinct_count")
+        let hasPopTotal = columnExists("baselines", "pop_total")
+        let popColumn = hasPopTotal ? ", pop_total" : ""
+        let countColumn = hasCount ? ", precinct_count" : ""
         let sql = """
-            SELECT scope, pct_white, pct_black, pct_hispanic, pct_asian,
+            SELECT scope\(popColumn), pct_white, pct_black, pct_hispanic, pct_asian,
                    pct_ba_or_higher, income_median, pct_renter, avg_age, pres24_dem_share
-                   \(hasCount ? ", precinct_count" : "")
+                   \(countColumn)
             FROM baselines WHERE scope = ?
             """
         var stmt: OpaquePointer?
@@ -266,19 +268,21 @@ public final class PrecinctDB {
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, scope, -1, SQLITE_TRANSIENT)
         guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        let offset: Int32 = hasPopTotal ? 1 : 0
         return Baseline(scope: text(stmt, 0) ?? scope,
-                        pctWhite: dbl(stmt, 1), pctBlack: dbl(stmt, 2),
-                        pctHispanic: dbl(stmt, 3), pctAsian: dbl(stmt, 4),
-                        pctBachelorsOrHigher: dbl(stmt, 5), incomeMedian: int(stmt, 6),
-                        pctRenter: dbl(stmt, 7), avgAge: dbl(stmt, 8),
-                        leanDemShare: dbl(stmt, 9),
-                        precinctCount: hasCount ? int(stmt, 10) : nil)
+                        pctWhite: dbl(stmt, 1 + offset), pctBlack: dbl(stmt, 2 + offset),
+                        pctHispanic: dbl(stmt, 3 + offset), pctAsian: dbl(stmt, 4 + offset),
+                        pctBachelorsOrHigher: dbl(stmt, 5 + offset), incomeMedian: int(stmt, 6 + offset),
+                        pctRenter: dbl(stmt, 7 + offset), avgAge: dbl(stmt, 8 + offset),
+                        leanDemShare: dbl(stmt, 9 + offset),
+                        precinctCount: hasCount ? int(stmt, 10 + offset) : nil,
+                        popTotal: hasPopTotal ? int(stmt, 1) : nil)
     }
 
     /// Every area this precinct can be compared against, widest last, skipping any that are too
     /// small to mean anything. The state is always present, so this is never empty.
     public func comparisonAreas(for profile: PrecinctProfile) -> [Baseline] {
-        [ComparisonArea.county, .metro, .state].compactMap { area in
+        [ComparisonArea.county, .region, .metro, .state].compactMap { area in
             guard let key = area.scopeKey(for: profile), let base = baseline(scope: key) else { return nil }
             return (area == .state || base.isMeaningful) ? base : nil
         }
@@ -364,10 +368,68 @@ public final class PrecinctDB {
                              leanBuckets: leanBuckets)
     }
 
+    /// Aggregate overview for a multi-jurisdiction coverage region. This deliberately uses
+    /// unit-id prefixes from the region metadata rather than pretending the region is a state
+    /// value in the database. It is safe for an older bundle with no matching rows, returning a
+    /// zero/empty overview just like an uncovered state.
+    public func scopeOverview(region: CoverageRegion) -> ScopeOverview {
+        guard region.isAggregate else {
+            return scopeOverview(state: region.jurisdictions.first?.state ?? region.id)
+        }
+        let clauses = region.jurisdictions.map { _ in "unit_id LIKE ?" }.joined(separator: " OR ")
+        let binds = region.jurisdictions.map { "\($0.code)-%" }
+        func scalar(_ sql: String) -> Double? {
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+            defer { sqlite3_finalize(stmt) }
+            bindTexts(stmt, binds)
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+            return dbl(stmt, 0)
+        }
+        let whereSQL = "(\(clauses))"
+        let count = Int(scalar("SELECT COUNT(*) FROM precincts WHERE \(whereSQL)") ?? 0)
+        let pop = scalar("SELECT SUM(pop_total) FROM precincts WHERE \(whereSQL) AND pop_total IS NOT NULL")
+        let avg = scalar("SELECT AVG(lean_dem_share) FROM precincts WHERE \(whereSQL) AND lean_votes >= 100")
+        let n = Int(scalar("SELECT COUNT(*) FROM precincts WHERE \(whereSQL) AND income_median IS NOT NULL") ?? 0)
+        let median: Int? = n == 0 ? nil : Int(scalar("SELECT income_median FROM precincts WHERE \(whereSQL) AND income_median IS NOT NULL ORDER BY income_median LIMIT 1 OFFSET \(n / 2)") ?? 0)
+        var buckets: [String: Int] = [:]
+        var stmt: OpaquePointer?
+        let bucketSQL = "SELECT lean_label, COUNT(*) FROM precincts WHERE \(whereSQL) AND lean_label IS NOT NULL AND lean_votes >= 100 GROUP BY lean_label"
+        if sqlite3_prepare_v2(db, bucketSQL, -1, &stmt, nil) == SQLITE_OK {
+            bindTexts(stmt, binds)
+            while sqlite3_step(stmt) == SQLITE_ROW { if let label = text(stmt, 0) { buckets[label] = Int(sqlite3_column_int(stmt, 1)) } }
+        }
+        sqlite3_finalize(stmt)
+        let order = ["Solid Rep", "Lean Rep", "Even", "Lean Dem", "Solid Dem"]
+        let leanBuckets = order.compactMap { label -> LeanBucket? in
+            guard let count = buckets[label], count > 0 else { return nil }
+            return LeanBucket(label: label, count: count)
+        }
+        return ScopeOverview(precinctCount: count, totalPopulation: (pop ?? 0) > 0 ? Int(pop!) : nil,
+                             avgDemShare: avg, medianIncome: median, leanBuckets: leanBuckets)
+    }
+
     public func funFacts(state: String, county: String? = nil) -> [FunFact] {
+        funFacts(state: state, county: county, unitIDPrefixes: [])
+    }
+
+    public func funFacts(region: CoverageRegion) -> [FunFact] {
+        guard region.isAggregate else {
+            return funFacts(state: region.jurisdictions.first?.state ?? region.id)
+        }
+        return funFacts(state: region.id, county: nil,
+                        unitIDPrefixes: region.jurisdictions.map(\.code))
+    }
+
+    private func funFacts(state: String, county: String?, unitIDPrefixes: [String]) -> [FunFact] {
         var facts: [FunFact] = []
-        let scope = county == nil ? "state = ?" : "state = ? AND borough = ?"
-        let scopeBinds = county.map { [state, $0] } ?? [state]
+        let scope = unitIDPrefixes.isEmpty
+            ? (county == nil ? "state = ?" : "state = ? AND borough = ?")
+            : "(\(unitIDPrefixes.map { _ in "unit_id LIKE ?" }.joined(separator: " OR ")))"
+        let scopeBinds = unitIDPrefixes.isEmpty
+            ? (county.map { [state, $0] } ?? [state])
+            : unitIDPrefixes.map { "\($0)-%" }
+        let leaderboardPrefixes = unitIDPrefixes
 
         // With a county filter the county is already in the header, so showing "County, ST" on
         // every card is redundant — show the precinct id instead. Statewide, the county is the
@@ -426,7 +488,8 @@ public final class PrecinctDB {
                                      note: tie?.note ?? "The top precincts here, ranked.",
                                      state: state, county: county,
                                      valueColumn: column, baseFilter: filter,
-                                     ascending: ascending, displayKind: displayKind)
+                                     ascending: ascending, displayKind: displayKind,
+                                     unitIDPrefixes: leaderboardPrefixes)
             facts.append(FunFact(id: id, icon: icon, title: title,
                                  value: fmt(sqlite3_column_double(stmt, 4)), place: place,
                                  unitID: text(stmt, 0),
@@ -459,7 +522,8 @@ public final class PrecinctDB {
                                      note: tie?.note ?? "The top precincts here, ranked.",
                                      state: state, county: county,
                                      valueColumn: displayExpr, orderExpr: orderExpr, baseFilter: filter,
-                                     ascending: ascending, displayKind: displayKind)
+                                     ascending: ascending, displayKind: displayKind,
+                                     unitIDPrefixes: leaderboardPrefixes)
             facts.append(FunFact(id: id, icon: icon, title: title,
                                  value: fmt(sqlite3_column_double(stmt, 4)), place: place,
                                  unitID: text(stmt, 0),
@@ -470,8 +534,11 @@ public final class PrecinctDB {
 
         // Senate-vs-President crossover (NY/MA only; CA has no senate data).
         func topCrossover() {
+            guard leaderboardPrefixes.isEmpty else { return }
             // Same scope binds, but referencing the `p` (precincts) alias used in the joins.
-            let pScope = county == nil ? "p.state = ?" : "p.state = ? AND p.borough = ?"
+            let pScope = leaderboardPrefixes.isEmpty
+                ? (county == nil ? "p.state = ?" : "p.state = ? AND p.borough = ?")
+                : "(\(leaderboardPrefixes.map { _ in "p.unit_id LIKE ?" }.joined(separator: " OR ")))"
 
             // Latest year where senate data exists for this scope.
             let yearSQL = """
@@ -646,8 +713,12 @@ public final class PrecinctDB {
     /// called when the user taps "see all". Population breaks ties so the order is deterministic.
     public func topPrecincts(_ spec: LeaderboardSpec, limit: Int = 25) -> [LeaderRow] {
         guard let boundedLimit = Self.boundedLimit(limit, maximum: 100) else { return [] }
-        let scope = spec.county == nil ? "state = ?" : "state = ? AND borough = ?"
-        let scopeBinds = spec.county.map { [spec.state, $0] } ?? [spec.state]
+        let scope = spec.unitIDPrefixes.isEmpty
+            ? (spec.county == nil ? "state = ?" : "state = ? AND borough = ?")
+            : "(\(spec.unitIDPrefixes.map { _ in "unit_id LIKE ?" }.joined(separator: " OR ")))"
+        let scopeBinds = spec.unitIDPrefixes.isEmpty
+            ? (spec.county.map { [spec.state, $0] } ?? [spec.state])
+            : spec.unitIDPrefixes.map { "\($0)-%" }
         let sql = """
             SELECT unit_id, borough, state, precinct_name, \(spec.valueColumn),
                    (min_lon + max_lon) / 2.0, (min_lat + max_lat) / 2.0
