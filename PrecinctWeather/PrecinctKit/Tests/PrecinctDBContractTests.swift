@@ -151,6 +151,70 @@ final class PrecinctDBContractTests: XCTestCase {
         }
     }
 
+    func testNYIncomeLeaderboardIncludesEveryTopCodedTieThenNext25() throws {
+        try assertTopCodedIncomeLeaderboard(
+            facts: PrecinctDB.shared.funFacts(state: "NY"),
+            scopeSQL: "state = 'NY'",
+            label: "NY"
+        )
+    }
+
+    func testCountyIncomeLeaderboardIncludesEveryTopCodedTieThenNext25() throws {
+        try assertTopCodedIncomeLeaderboard(
+            facts: PrecinctDB.shared.funFacts(state: "NY", county: "Westchester"),
+            scopeSQL: "state = 'NY' AND borough = 'Westchester'",
+            label: "Westchester"
+        )
+    }
+
+    func testDMVIncomeLeaderboardIncludesEveryTopCodedTieThenNext25() throws {
+        let prefixes = CoverageRegion.dmvCore.jurisdictions.map { "unit_id LIKE '\($0.code)-%'" }
+        try assertTopCodedIncomeLeaderboard(
+            facts: PrecinctDB.shared.funFacts(region: .dmvCore),
+            scopeSQL: "(\(prefixes.joined(separator: " OR ")))",
+            label: "DMV"
+        )
+    }
+
+    func testUncappedStateIncomeLeaderboardsUseGenericNoteAndMatchingWinner() throws {
+        for state in ["OR", "DC"] {
+            try assertUncappedIncomeLeaderboard(state: state, county: nil, label: state)
+        }
+    }
+
+    func testUncappedCountyIncomeLeaderboardsUsePopulationTiebreakAndGenericNote() throws {
+        for county in ["Concho", "Lynn", "Waller"] {
+            try assertUncappedIncomeLeaderboard(state: "TX", county: county, label: county)
+        }
+    }
+
+    func testSingleTopCodedPrecinctUsesSingularPresentation() throws {
+        let scopes = [
+            ("CA", "Monterey"), ("CA", "Santa Barbara"),
+            ("NY", "Bronx"), ("NY", "Monroe"),
+            ("TX", "Bexar"), ("TX", "Travis"),
+            ("VA", "Loudoun"),
+        ]
+        for (state, county) in scopes {
+            let fact = try XCTUnwrap(
+                PrecinctDB.shared.funFacts(state: state, county: county).first { $0.id == "income" },
+                "\(state) \(county)"
+            )
+            let spec = try XCTUnwrap(fact.leaderboard, "\(state) \(county)")
+            XCTAssertEqual(fact.tieCount, 1, "\(state) \(county)")
+            XCTAssertEqual(fact.tieCountLabel, "1 precinct", "\(state) \(county)")
+            XCTAssertEqual(spec.unrankedTieCount, 1, "\(state) \(county)")
+            XCTAssertEqual(spec.unrankedTieSummary(value: "$250k+"),
+                           "1 precinct is tied at $250k+", "\(state) \(county)")
+        }
+
+        let ny = try XCTUnwrap(
+            PrecinctDB.shared.funFacts(state: "NY").first { $0.id == "income" }?.leaderboard
+        )
+        XCTAssertEqual(ny.unrankedTieSummary(value: "$250k+"),
+                       "166 precincts tie at $250k+")
+    }
+
     func testPublicLimitsRejectUnboundedAndNonPositiveRequests() throws {
         let db = PrecinctDB.shared
         XCTAssertTrue(db.countyRows(state: "CA", county: "Los Angeles", lon: -118.24, lat: 34.05, limit: 0).isEmpty)
@@ -420,5 +484,89 @@ final class PrecinctDBContractTests: XCTestCase {
         XCTAssertEqual(sqlite3_step(statement), SQLITE_ROW, sql)
         guard let value = sqlite3_column_text(statement, 0) else { return nil }
         return String(cString: value)
+    }
+
+    private func assertTopCodedIncomeLeaderboard(
+        facts: [FunFact],
+        scopeSQL: String,
+        label: String
+    ) throws {
+        let db = PrecinctDB.shared
+        let fact = try XCTUnwrap(facts.first { $0.id == "income" }, label)
+        let spec = try XCTUnwrap(fact.leaderboard, label)
+        let tieCount = try XCTUnwrap(fact.tieCount, label)
+        XCTAssertEqual(spec.unrankedTieCount, tieCount, label)
+        XCTAssertEqual(spec.unrankedTieValue, 250001, label)
+
+        let rows = db.topPrecincts(spec)
+        let tied = Array(rows.prefix(tieCount))
+        let ranked = Array(rows.dropFirst(tieCount))
+        XCTAssertEqual(tied.count, tieCount, label)
+        XCTAssertEqual(tied.map(\.value), Array(repeating: 250001, count: tieCount), label)
+        XCTAssertEqual(tied.map(\.id), tied.map(\.id).sorted(), "\(label) tied order")
+        XCTAssertEqual(ranked.count, 25, label)
+        XCTAssertTrue(ranked.allSatisfy { $0.value < 250001 }, label)
+
+        let actualPairs = rows.map { ($0.id, Int($0.value)) }
+        let expectedPairs = try incomeLeaderboardRows(scopeSQL: scopeSQL)
+        XCTAssertEqual(actualPairs.map(\.0), expectedPairs.map(\.0), "\(label) ids")
+        XCTAssertEqual(actualPairs.map(\.1), expectedPairs.map(\.1), "\(label) values")
+        XCTAssertEqual(Set(rows.map(\.id)).count, rows.count, "\(label) duplicate ids")
+        XCTAssertEqual(db.topPrecincts(spec, limit: 1).count, tieCount + 1, "\(label) tie completeness")
+        for row in rows {
+            let profile = try XCTUnwrap(db.precinct(unitID: row.id)?.profile, row.id)
+            XCTAssertEqual(profile.unitID, row.id)
+            XCTAssertEqual(profile.incomeMedian, Int(row.value), row.id)
+        }
+    }
+
+    private func assertUncappedIncomeLeaderboard(
+        state: String,
+        county: String?,
+        label: String
+    ) throws {
+        let db = PrecinctDB.shared
+        let fact = try XCTUnwrap(
+            db.funFacts(state: state, county: county).first { $0.id == "income" }, label
+        )
+        let spec = try XCTUnwrap(fact.leaderboard, label)
+        let rows = db.topPrecincts(spec)
+        XCTAssertNil(fact.tieCount, label)
+        XCTAssertNil(spec.unrankedTieCount, label)
+        XCTAssertNil(spec.unrankedTieValue, label)
+        XCTAssertEqual(spec.note, "The top precincts here, ranked.", label)
+        XCTAssertEqual(rows.first?.id, fact.unitID, label)
+        XCTAssertEqual(rows.first?.value, Double(db.precinct(unitID: fact.unitID!)!.profile.incomeMedian!), label)
+        XCTAssertTrue(rows.allSatisfy { $0.value < 250001 }, label)
+    }
+
+    private func incomeLeaderboardRows(scopeSQL: String) throws -> [(String, Int)] {
+        let url = try XCTUnwrap(
+            Bundle(for: PrecinctDB.self).url(forResource: "nyc_precincts", withExtension: "sqlite")
+        )
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READONLY, nil), SQLITE_OK)
+        let handle = try XCTUnwrap(database)
+        defer { sqlite3_close(handle) }
+        let sql = """
+            SELECT unit_id, income_median FROM precincts
+            WHERE \(scopeSQL) AND pop_total >= 500 AND income_median = 250001
+            ORDER BY unit_id ASC;
+            """ + """
+            SELECT unit_id, income_median FROM precincts
+            WHERE \(scopeSQL) AND pop_total >= 500 AND income_median < 250001
+            ORDER BY income_median DESC, pop_total DESC, unit_id ASC LIMIT 25
+            """
+        var output: [(String, Int)] = []
+        for statementSQL in sql.split(separator: ";") {
+            var statement: OpaquePointer?
+            XCTAssertEqual(sqlite3_prepare_v2(handle, String(statementSQL), -1, &statement, nil), SQLITE_OK)
+            defer { sqlite3_finalize(statement) }
+            while sqlite3_step(statement) == SQLITE_ROW {
+                let id = String(cString: sqlite3_column_text(statement, 0))
+                output.append((id, Int(sqlite3_column_int64(statement, 1))))
+            }
+        }
+        return output
     }
 }

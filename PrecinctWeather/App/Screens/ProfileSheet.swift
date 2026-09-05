@@ -76,26 +76,20 @@ struct BottomPanel: View {
                 // Invisible grab strip: the visible handle stays a 5pt capsule, but the top
                 // 64pt of the card behaves like the handle (tap toggles, drag resizes), so
                 // pulling the full view back down doesn't require landing on the thin handle.
-                Color.clear
-                    .frame(height: 64)
-                    .contentShape(Rectangle())
-                    .onTapGesture { snap(); withAnimation(spring) { expanded.toggle() } }
-                    .gesture(resizeDrag(peekH: peekH, fullH: fullH))
-                    .accessibilityHidden(true)
-            }
-            // Layered AFTER the grab strip so its taps aren't swallowed by that catcher.
-            // Expanded-only: at peek the whole card is the tap target for expanding, and a
-            // button competing with that is how you get a card that won't open.
-            .overlay(alignment: .topTrailing) {
-                if expanded, let p = model.selection {
-                    ShareCardButton(profile: p, rings: model.selectedRings,
-                                    trend: model.presidentTrend, baseline: model.stateBaseline)
-                        .padding(.trailing, 12)
-                        // Keep the whole circle inside the panel's white surface. A negative inset
-                        // lets it float over the map, which gets especially obvious while scrolling.
-                        .padding(.top, 8)
-                        .transition(.opacity)
+                // In the expanded panel, leave the share button's trailing lane to the button.
+                HStack(spacing: 0) {
+                    Color.clear
+                        .frame(height: 64)
+                        .contentShape(Rectangle())
+                        .onTapGesture { snap(); withAnimation(spring) { expanded.toggle() } }
+                        .gesture(resizeDrag(peekH: peekH, fullH: fullH))
+                    if expanded {
+                        Color.clear
+                            .frame(width: 60, height: 64)
+                            .allowsHitTesting(false)
+                    }
                 }
+                .accessibilityHidden(true)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         }
@@ -175,7 +169,7 @@ private struct ProfileContent: View {
     private var content: some View {
             if let p = model.selection {
                 VStack(spacing: 9) {
-                    LeanHero(profile: p)
+                    LeanHero(profile: p, showsShareButton: scrolls)
                     // Peek shows only the lean headline; the rest appears as the card grows so
                     // nothing bleeds in below the fold at rest.
                     if showContent {
@@ -333,13 +327,22 @@ private struct SheetSmallStat: View {
 // MARK: - 1) Lean (the headline)
 
 private struct LeanHero: View {
+    @EnvironmentObject var model: LocationModel
+    @Environment(\.dynamicTypeSize) private var dts
     let profile: PrecinctProfile
+    let showsShareButton: Bool
     private var color: Color { Palette.lean(profile.leanDemShare) }
     private var labelText: String? { profile.leanLabel }
-    private var accessibilityText: String {
-        var parts = [
-            "\(countyDisplay(profile.borough)), \(profile.state)" + (profile.precinctName.map { ", \(precinctTitleDisplay($0))" } ?? "")
-        ]
+    private var localityText: String {
+        "\(countyDisplay(profile.borough)), \(profile.state)"
+            + (profile.precinctName.map { " (\(precinctDisplayName($0)))" } ?? "")
+    }
+    private var localityLineLimit: Int? {
+        if !showsShareButton { return 1 }
+        return dts.isAccessibilitySize ? nil : 2
+    }
+    private var leanAccessibilityText: String {
+        var parts: [String] = []
         parts.append(profile.leanDemShare == nil ? "No election data" : "Political lean \(profile.leanShort)")
         if let labelText {
             parts.append(labelText + (profile.leanYear.map { " in \($0)" } ?? ""))
@@ -359,48 +362,67 @@ private struct LeanHero: View {
     }
     var body: some View {
         VStack(spacing: 5) {
-            Text("\(countyDisplay(profile.borough)), \(profile.state)" + (profile.precinctName.map { " (\(precinctDisplayName($0)))" } ?? ""))
+            Text(localityText)
                 .font(.subheadline).foregroundStyle(.secondary)
-                .lineLimit(1).minimumScaleFactor(0.8)
-            Text(profile.leanShort)
-                .font(.serifDisplay(38, .heavy))
-                .foregroundStyle(color).contentTransition(.numericText())
-            if let labelText {
-                Text(labelText + (profile.leanYear.map { " in \($0)" } ?? ""))
-                    .font(.subheadline.weight(.semibold)).foregroundStyle(color)
+                .multilineTextAlignment(.center)
+                .lineLimit(localityLineLimit)
+                .minimumScaleFactor(showsShareButton ? 1 : 0.8)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity)
+                .accessibilityIdentifier("Profile locality")
+                // Reserve the button's width on both sides so the locality remains centered and
+                // can never render underneath it. At peek there is no button and no reservation.
+                .padding(.horizontal, showsShareButton ? 44 : 0)
+                .overlay(alignment: .topTrailing) {
+                    // This overlay belongs to the ScrollView, so it follows the hero instead of
+                    // floating above it. It deliberately does not make the collapsed row taller.
+                    if showsShareButton {
+                        ShareCardButton(profile: profile, rings: model.selectedRings,
+                                        trend: model.presidentTrend, baseline: model.stateBaseline)
+                    }
+                }
+
+            VStack(spacing: 5) {
+                Text(profile.leanShort)
+                    .font(.serifDisplay(38, .heavy))
+                    .foregroundStyle(color).contentTransition(.numericText())
+                if let labelText {
+                    Text(labelText + (profile.leanYear.map { " in \($0)" } ?? ""))
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(color)
+                }
+                if let s = profile.leanDemShare {
+                    TwoPartyBar(demShare: s).accessibilityHidden(true).padding(.top, 2)
+                    HStack {
+                        Text("\(Fmt.pct(s)) Dem").foregroundStyle(Palette.dem)
+                        Spacer()
+                        Text("\(Fmt.pct(1 - s)) Rep").foregroundStyle(Palette.rep)
+                    }
+                    .font(.caption)
+                    // A precinct with a handful of ballots can read R+100; say so instead of
+                    // letting the giant number stand alone. (100 matches By-the-Numbers' floor.)
+                    if let v = profile.leanVotes, v < 100 {
+                        Text("Based on only \(v) vote\(v == 1 ? "" : "s") cast")
+                            .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                    }
+                    if let t = profile.turnoutEst, t <= 1.05 {
+                        // "Votes cast" used to be an orphan tile down in the stat grid. Turnout is
+                        // the number it qualifies, so they read as one line.
+                        Text("\(Fmt.pct(min(t, 1))) turnout"
+                             + (profile.leanYear.map { " in \($0)" } ?? "")
+                             + (profile.leanVotes.flatMap { $0 >= 100 ? " from \(Fmt.compact($0)) votes" : nil } ?? ""))
+                            .font(.caption2).foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            // Now that this line carries the vote count too it can outrun one line at
+                            // large text sizes; wrap rather than truncate the number away.
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
-            if let s = profile.leanDemShare {
-                TwoPartyBar(demShare: s).accessibilityHidden(true).padding(.top, 2)
-                HStack {
-                    Text("\(Fmt.pct(s)) Dem").foregroundStyle(Palette.dem)
-                    Spacer()
-                    Text("\(Fmt.pct(1 - s)) Rep").foregroundStyle(Palette.rep)
-                }
-                .font(.caption)
-                // A precinct with a handful of ballots can read R+100; say so instead of
-                // letting the giant number stand alone. (100 matches By-the-Numbers' floor.)
-                if let v = profile.leanVotes, v < 100 {
-                    Text("Based on only \(v) vote\(v == 1 ? "" : "s") cast")
-                        .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-                }
-                if let t = profile.turnoutEst, t <= 1.05 {
-                    // "Votes cast" used to be an orphan tile down in the stat grid. Turnout is
-                    // the number it qualifies, so they read as one line.
-                    Text("\(Fmt.pct(min(t, 1))) turnout"
-                         + (profile.leanYear.map { " in \($0)" } ?? "")
-                         + (profile.leanVotes.flatMap { $0 >= 100 ? " from \(Fmt.compact($0)) votes" : nil } ?? ""))
-                        .font(.caption2).foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        // Now that this line carries the vote count too it can outrun one line at
-                        // large text sizes; wrap rather than truncate the number away.
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(leanAccessibilityText)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 2)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(accessibilityText)
     }
 }
 

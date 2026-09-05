@@ -146,7 +146,8 @@ struct FunFactsView: View {
         case .single(let f):
             FactRow(fact: f, onTap: { tap(f) }, onSeeAll: { leaderboard = $0 })
         case .range(let low, let high, let key):
-            RangeRow(low: low, high: high, pairKey: key, onTap: { tap($0) })
+            RangeRow(low: low, high: high, pairKey: key,
+                     onTap: { tap($0) }, onSeeAll: { leaderboard = $0 })
         case .tenure(let renter, let owner):
             TenureRow(renter: renter, owner: owner, onTap: { tap($0) }, onSeeAll: { leaderboard = $0 })
         }
@@ -397,13 +398,16 @@ private struct LeanBar: View {
     }
 }
 
-/// A neutral pill that drills into a fact's full list. "475 precincts" when many tie at the value,
-/// otherwise "See all". Never the lean palette.
+/// A neutral pill that drills into a fact's full list. It can name the count or say "N tied" when
+/// the exact tie count is the reason for drilling in. Never the lean palette.
 private struct SeeAllChip: View {
     let tieCount: Int?
+    var showsTieWording = false
     var body: some View {
         HStack(spacing: 3) {
-            Text(tieCount.map { "\($0) precincts" } ?? "See all")
+            Text(tieCount.map {
+                showsTieWording ? "\($0) tied" : ($0 == 1 ? "1 precinct" : "\($0) precincts")
+            } ?? "See all")
             Image(systemName: "chevron.right")
         }
         .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
@@ -477,6 +481,7 @@ private struct RangeRow: View {
     let high: FunFact
     let pairKey: String
     var onTap: (FunFact) -> Void = { _ in }
+    var onSeeAll: (LeaderboardSpec) -> Void = { _ in }
 
     private var label: String {
         switch pairKey {
@@ -532,7 +537,10 @@ private struct RangeRow: View {
     }
 
     private func endpoint(_ f: FunFact) -> some View {
-        Button { onTap(f) } label: {
+        let incomeLeaderboard = pairKey == "income" && f.id == "income" ? f.leaderboard : nil
+        return Button {
+            if let incomeLeaderboard { onSeeAll(incomeLeaderboard) } else { onTap(f) }
+        } label: {
             VStack(alignment: .center, spacing: 2) {
                 Text(f.value).font(.headline.bold().monospacedDigit()).foregroundStyle(valueColor(f))
                     .lineLimit(1).fixedSize()
@@ -540,12 +548,21 @@ private struct RangeRow: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.82).allowsTightening(true)
                     .frame(maxWidth: .infinity, alignment: .center)
+                if incomeLeaderboard != nil {
+                    SeeAllChip(tieCount: f.tieCount, showsTieWording: true)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .center)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(f.value), \(f.place)")
-        .accessibilityHint("Double-tap to view this precinct")
+        .accessibilityIdentifier(incomeLeaderboard == nil
+                                 ? "Range endpoint \(f.id)"
+                                 : "Highest income leaderboard")
+        .accessibilityLabel(f.tieCountLabel.map { "\(f.value), \($0) tied" }
+                            ?? "\(f.value), \(f.place)")
+        .accessibilityHint(incomeLeaderboard == nil
+                           ? "Double-tap to view this precinct"
+                           : "Double-tap to view the income leaderboard")
     }
 }
 
@@ -632,28 +649,60 @@ private struct PrecinctLeaderboard: View {
 
     /// Every displayed value identical (a ceiling/saturated tie) → rank + value columns are noise.
     private var saturated: Bool {
+        guard spec.unrankedTieCount == nil else { return false }
         guard rows.count >= 3 else { return false }
         return Set(rows.map { valueText($0.value) }).count == 1
     }
 
+    private var tiedRows: ArraySlice<LeaderRow> {
+        rows.prefix(min(spec.unrankedTieCount ?? 0, rows.count))
+    }
+
+    private var rankedRows: ArraySlice<LeaderRow> {
+        rows.dropFirst(tiedRows.count)
+    }
+
     var body: some View {
         List {
-            Section {
-                ForEach(Array(rows.enumerated()), id: \.element.id) { idx, r in
-                    Button { go(r) } label: { row(idx + 1, r) }.buttonStyle(.plain)
-                }
-                if loaded && rows.isEmpty {
-                    Text("No precincts.").font(.subheadline).foregroundStyle(.secondary)
-                }
-            } header: {
-                if saturated {
-                    Text("\(rows.count) precincts tie at \(valueText(rows.first?.value ?? 0))")
+            if let tieCount = spec.unrankedTieCount, let tieValue = spec.unrankedTieValue {
+                Section {
+                    ForEach(tiedRows) { r in
+                        Button { go(r) } label: { row(nil, r, showValue: false) }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("Income tied precinct \(r.id)")
+                    }
+                } header: {
+                    Text(spec.unrankedTieSummary(value: valueText(tieValue))
+                         ?? "\(tieCount) precincts tie at \(valueText(tieValue))")
                         .font(.subheadline.weight(.semibold)).foregroundStyle(.primary).textCase(nil)
-                } else {
-                    Text(spec.note).font(.caption).foregroundStyle(.secondary).textCase(nil)
                 }
-            } footer: {
-                if rows.count >= 25 { Text("The 25 leaders in this area.") }
+                Section {
+                    ForEach(Array(rankedRows.enumerated()), id: \.element.id) { idx, r in
+                        Button { go(r) } label: { row(idx + 1, r) }.buttonStyle(.plain)
+                    }
+                } header: {
+                    Text("Next highest reported incomes").textCase(nil)
+                } footer: {
+                    if rankedRows.count >= 25 { Text("The next 25 precincts below the Census cap.") }
+                }
+            } else {
+                Section {
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { idx, r in
+                        Button { go(r) } label: { row(idx + 1, r) }.buttonStyle(.plain)
+                    }
+                    if loaded && rows.isEmpty {
+                        Text("No precincts.").font(.subheadline).foregroundStyle(.secondary)
+                    }
+                } header: {
+                    if saturated {
+                        Text("\(rows.count) precincts tie at \(valueText(rows.first?.value ?? 0))")
+                            .font(.subheadline.weight(.semibold)).foregroundStyle(.primary).textCase(nil)
+                    } else {
+                        Text(spec.note).font(.caption).foregroundStyle(.secondary).textCase(nil)
+                    }
+                } footer: {
+                    if rows.count >= 25 { Text("The 25 leaders in this area.") }
+                }
             }
         }
         .listStyle(.insetGrouped)
@@ -695,9 +744,9 @@ private struct PrecinctLeaderboard: View {
         return r.precinctName.isEmpty ? "\(c), \(r.state)" : "\(c), \(r.state) (\(precinctDisplayName(r.precinctName)))"
     }
 
-    private func row(_ rank: Int, _ r: LeaderRow) -> some View {
+    private func row(_ rank: Int?, _ r: LeaderRow, showValue: Bool = true) -> some View {
         HStack(spacing: 12) {
-            if !saturated {
+            if let rank, !saturated {
                 Text("\(rank)").font(.subheadline.monospacedDigit().weight(.semibold))
                     .foregroundStyle(.secondary).frame(width: 24, alignment: .trailing)
             }
@@ -705,7 +754,7 @@ private struct PrecinctLeaderboard: View {
                 .lineLimit(1).minimumScaleFactor(0.75).allowsTightening(true)
                 .accessibilityLabel(fullPlace(r))
             Spacer(minLength: 12)
-            if !saturated {
+            if showValue && !saturated {
                 Text(valueText(r.value)).font(.subheadline.bold().monospacedDigit())
                     .lineLimit(1).fixedSize().layoutPriority(1)
             }

@@ -1,8 +1,8 @@
 import XCTest
 
-/// End-to-end check for the share button. It exists because the button is layered over the
-/// panel's invisible 64pt grab strip (which owns tap + drag): the only way to know its taps
-/// aren't swallowed is to actually tap it in a running app.
+/// End-to-end check for the share button. It lives in the profile's scroll hierarchy beside a
+/// long locality name, while the panel's invisible 64pt grab strip owns nearby tap + drag input.
+/// The only way to protect both layout and interaction is to exercise the running app.
 ///
 /// Requires the simulator to have a location set inside coverage and location access granted:
 ///   xcrun simctl privacy <sim> grant location com.gaoe.PrecinctWeather
@@ -14,8 +14,8 @@ final class ShareCardUITests: XCTestCase {
         // NSArgumentDomain beats the persisted value, so @AppStorage reads these without the
         // app knowing it's under test and without polluting the sim's defaults.
         app.launchArguments = ["-hasOnboarded", "YES", "-hapticsEnabled", "NO",
-                               "-defaultState", "NY", "-disableLocation",
-                               "-testUnitID", "36081-:-36081001320"]
+                               "-defaultState", "DMV", "-disableLocation",
+                               "-testUnitID", "51510-:-000308"]
         // Lets one run check a different appearance without editing the test:
         //   TEST_RUNNER_APPEARANCE=dark xcodebuild test ...
         if let appearance = ProcessInfo.processInfo.environment["APPEARANCE"] {
@@ -29,6 +29,7 @@ final class ShareCardUITests: XCTestCase {
         let hero = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label CONTAINS 'Political lean'")).firstMatch
         XCTAssertTrue(hero.waitForExistence(timeout: 30), "no precinct was selected, so there is nothing to share")
+        attach("collapsed-panel-long-locality")
 
         // Expand via the handle, not by tapping the card body: at accessibility text sizes the
         // tap-to-expand catcher deliberately steps aside so the taller hero can scroll, and the
@@ -43,16 +44,35 @@ final class ShareCardUITests: XCTestCase {
 
         let collapse = app.buttons["Collapse panel"]
         XCTAssertTrue(collapse.exists, "expanded panel handle missing")
+        let locality = app.staticTexts["Profile locality"]
+        XCTAssertTrue(locality.exists, "profile locality is missing from the expanded hero")
         let shareFrame = share.frame
-        XCTAssertEqual(shareFrame.width, 34, accuracy: 1, "share circle width changed")
-        XCTAssertEqual(shareFrame.height, 34, accuracy: 1, "share circle height changed")
-        XCTAssertGreaterThanOrEqual(shareFrame.minY - collapse.frame.minY, 6,
-                                    "share button protrudes above the white panel")
-        XCTAssertEqual(app.windows.firstMatch.frame.maxX - shareFrame.maxX, 12, accuracy: 2,
-                       "share button trailing inset changed")
+        XCTAssertGreaterThanOrEqual(shareFrame.width, 44, "share target is narrower than 44pt")
+        XCTAssertGreaterThanOrEqual(shareFrame.height, 44, "share target is shorter than 44pt")
+        XCTAssertGreaterThanOrEqual(shareFrame.minY, collapse.frame.maxY,
+                                    "share button protrudes above the profile content")
+        XCTAssertLessThanOrEqual(shareFrame.maxX, app.windows.firstMatch.frame.maxX,
+                                 "share button protrudes beyond the panel")
+        XCTAssertFalse(shareFrame.intersects(locality.frame),
+                       "long locality text sits under the share button")
+
+        let initialShareY = shareFrame.minY
+        let initialLocalityY = locality.frame.minY
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.48))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45))
+        start.press(forDuration: 0.1, thenDragTo: end)
+        let shareMovement = share.frame.minY - initialShareY
+        let localityMovement = locality.frame.minY - initialLocalityY
+        XCTAssertLessThan(shareMovement, -1, "share button did not move with the profile scroll")
+        XCTAssertEqual(shareMovement, localityMovement, accuracy: 2,
+                       "share button detached from the locality while scrolling")
+
         app.swipeUp()
-        XCTAssertEqual(share.frame.minY, shareFrame.minY, accuracy: 1,
-                       "share button moved out of the panel while its content scrolled")
+        XCTAssertFalse(share.isHittable, "share button stayed pinned while its hero scrolled offscreen")
+        XCTAssertFalse(locality.isHittable, "locality stayed pinned while its share button scrolled offscreen")
+
+        for _ in 0..<3 where !share.isHittable { app.swipeDown() }
+        XCTAssertTrue(share.isHittable, "share button did not return with the hero after scrolling back")
 
         attach("expanded-panel")
 
@@ -117,6 +137,41 @@ final class ShareCardUITests: XCTestCase {
                           "chip '\(worst.label)' is \(worst.height)pt tall, so it wrapped onto multiple lines")
     }
 
+    func testTopCodedIncomeAffordanceOpensTiedPrecinctProfile() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-hasOnboarded", "YES", "-hapticsEnabled", "NO",
+                               "-defaultState", "NY", "-disableLocation"]
+        app.launch()
+
+        let byNumbers = app.buttons["By the numbers"]
+        XCTAssertTrue(byNumbers.waitForExistence(timeout: 20), "By the numbers button missing")
+        byNumbers.tap()
+
+        let highestIncome = app.buttons["Highest income leaderboard"]
+        for _ in 0..<5 where !highestIncome.exists { app.swipeUp() }
+        XCTAssertTrue(highestIncome.waitForExistence(timeout: 10),
+                      "highest-income tie affordance missing")
+        XCTAssertTrue(highestIncome.label.contains("166 precincts tied"),
+                      "highest-income affordance does not expose the true tie count")
+        highestIncome.tap()
+
+        XCTAssertTrue(app.navigationBars["Highest income"].waitForExistence(timeout: 10),
+                      "income leaderboard did not open")
+        XCTAssertTrue(app.staticTexts["166 precincts tie at $250k+"].waitForExistence(timeout: 10),
+                      "complete tie-group header missing")
+
+        let precinct = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH 'Income tied precinct '")
+        ).firstMatch
+        XCTAssertTrue(precinct.waitForExistence(timeout: 10), "no tied precinct row is tappable")
+        precinct.tap()
+
+        let hero = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS 'Political lean'"))
+            .firstMatch
+        XCTAssertTrue(hero.waitForExistence(timeout: 15), "tied precinct did not open its profile")
+    }
+
     /// Apple Maps puts Midway City's representative point in a sub-meter seam between public
     /// precinct polygons. Search should still open an Orange County precinct instead of claiming
     /// that a California place is outside coverage.
@@ -151,36 +206,87 @@ final class ShareCardUITests: XCTestCase {
         attach("midway-search")
     }
 
-    /// Switching coverage areas used to animate the pill before the destination profile and
-    /// county tint had settled. Repeated switches should keep one stable control frame and never
-    /// expose a stale destination while the new map loads.
+    /// The visible coverage capsule follows its label inside a stable, centered Menu host. The
+    /// stable host prevents a long label from being clipped to a previous short label's rectangle
+    /// while the menu dismisses.
     func testCoverageAreaSwitchKeepsSelectorFrame() {
         let app = XCUIApplication()
         app.launchArguments = ["-hasOnboarded", "YES", "-hapticsEnabled", "NO",
                                "-defaultState", "DMV", "-disableLocation"]
         app.launch()
 
-        let switcher = app.buttons.matching(
+        let switcher = app.descendants(matching: .any).matching(
             NSPredicate(format: "label BEGINSWITH 'Switch coverage area'")
         ).firstMatch
         XCTAssertTrue(switcher.waitForExistence(timeout: 15), "coverage area selector missing")
-        let initialWidth = switcher.frame.width
+        let windowMidX = app.windows.firstMatch.frame.midX
+        let byNumbers = app.buttons["By the numbers"]
+        let settings = app.buttons["Settings"]
+        XCTAssertTrue(byNumbers.exists, "By the Numbers control missing")
+        XCTAssertTrue(settings.exists, "Settings control missing")
+
+        func recordSelector(named name: String) {
+            let fullLabel = "Switch coverage area, currently \(name)"
+            let selectedSwitcher = app.descendants(matching: .any).matching(
+                NSPredicate(format: "label == %@", fullLabel)
+            ).firstMatch
+            XCTAssertTrue(selectedSwitcher.waitForExistence(timeout: 5),
+                          "coverage area selector never showed the full '\(name)' label")
+            XCTAssertEqual(selectedSwitcher.label, fullLabel,
+                           "coverage area selector truncated '\(name)'")
+            XCTAssertEqual(selectedSwitcher.frame.height, 44, accuracy: 1,
+                           "selector tap height changed for '\(name)'")
+            XCTAssertEqual(selectedSwitcher.frame.width, 168, accuracy: 1,
+                           "stable selector host changed width for '\(name)'")
+            XCTAssertEqual(selectedSwitcher.frame.midX, windowMidX, accuracy: 1,
+                           "selector stopped being centered for '\(name)'")
+            XCTAssertFalse(selectedSwitcher.frame.intersects(byNumbers.frame),
+                           "selector host overlaps the By the Numbers control for '\(name)'")
+            XCTAssertFalse(selectedSwitcher.frame.intersects(settings.frame),
+                           "selector host overlaps the Settings control for '\(name)'")
+            XCTAssertTrue(byNumbers.isHittable,
+                          "By the Numbers control is not hittable beside '\(name)'")
+            XCTAssertTrue(settings.isHittable,
+                          "Settings control is not hittable beside '\(name)'")
+        }
+
+        func attachSettledSelector(named name: String) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = "coverage-selector-\(name)"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+
+        recordSelector(named: "DMV (DC, MD, VA)")
+        attachSettledSelector(named: "dmv")
 
         switcher.tap()
-        XCTAssertTrue(app.buttons["Colorado"].waitForExistence(timeout: 10), "Colorado menu option missing")
-        XCTAssertTrue(app.buttons["Oregon"].exists, "Oregon menu option missing")
+        let colorado = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == 'Colorado'")
+        ).firstMatch
+        XCTAssertTrue(colorado.waitForExistence(timeout: 10), "Colorado menu option missing")
+        XCTAssertTrue(app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == 'Oregon'")
+        ).firstMatch.exists, "Oregon menu option missing")
         attach("coverage-picker")
-        app.buttons["Colorado"].tap()
+        colorado.tap()
+        recordSelector(named: "Colorado")
 
-        for name in ["California", "Oregon", "Texas", "DMV (DC, MD, VA)", "California"] {
+        for name in ["California", "Massachusetts", "New York", "Oregon", "Texas",
+                     "DMV (DC, MD, VA)", "California"] {
             switcher.tap()
-            let option = app.buttons[name].firstMatch
+            let option = app.descendants(matching: .any).matching(
+                NSPredicate(format: "label == %@", name)
+            ).firstMatch
             XCTAssertTrue(option.waitForExistence(timeout: 10), "menu option '\(name)' missing")
             option.tap()
             XCTAssertTrue(switcher.waitForExistence(timeout: 5), "coverage area selector disappeared after '\(name)'")
-            XCTAssertEqual(switcher.frame.width, initialWidth, accuracy: 1.0,
-                           "selector width changed after switching to '\(name)'")
+            recordSelector(named: name)
+            if name == "Texas" || name == "DMV (DC, MD, VA)" {
+                attachSettledSelector(named: name == "Texas" ? "texas" : "dmv-return")
+            }
         }
+
     }
 
     func testOregonAndColoradoPopularPlacesOpenProfilesAndByNumbers() {

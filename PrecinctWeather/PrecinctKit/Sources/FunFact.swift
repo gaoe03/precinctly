@@ -42,6 +42,10 @@ public struct FunFact: Identifiable, Sendable {
     public let tieCount: Int?        // precincts sharing this exact displayed value (cap/ceiling ties); nil = unique
     public let leaderboard: LeaderboardSpec?   // present iff there's a crowd to drill into
 
+    public var tieCountLabel: String? {
+        tieCount.map { $0 == 1 ? "1 precinct" : "\($0) precincts" }
+    }
+
     public init(id: String, icon: String, title: String, value: String,
                 place: String, unitID: String? = nil, lat: Double?, lon: Double?,
                 category: FactCategory, kind: FactKind,
@@ -55,9 +59,8 @@ public struct FunFact: Identifiable, Sendable {
     }
 }
 
-/// Everything needed to query + present a fact's full "see all" ranked list. Built for every
-/// rankable fact: tapping a superlative pushes the top 25 precincts ordered by that fact's own
-/// metric (so ties stop mattering — you see the whole ranking, not one arbitrary winner).
+/// Everything needed to query + present a fact's full "see all" ranked list. Most facts show the
+/// top 25 precincts. A capped metric can declare a complete leading tie group before that ranking.
 public struct LeaderboardSpec: Hashable, Identifiable, Sendable {
     public let factID: String
     public let title: String
@@ -70,17 +73,28 @@ public struct LeaderboardSpec: Hashable, Identifiable, Sendable {
     public let baseFilter: String     // the fact's own size/sanity filter, e.g. "pop_total >= 500"
     public let ascending: Bool        // rank direction (true = smallest first, e.g. "lowest income")
     public let displayKind: ValueKind
+    public let unrankedTieValue: Double?  // complete leading tie group, before the bounded ranking
+    public let unrankedTieCount: Int?     // true database count, never inferred from loaded rows
     public var id: String { "\(factID)|\(state)|\(county ?? "")" }
 
     public enum ValueKind: String, Hashable, Sendable { case money, pct, age, density, lean, shiftPts }
 
+    public func unrankedTieSummary(value: String) -> String? {
+        guard let count = unrankedTieCount else { return nil }
+        return count == 1
+            ? "1 precinct is tied at \(value)"
+            : "\(count) precincts tie at \(value)"
+    }
+
     public init(factID: String, title: String, note: String, state: String, county: String?,
                 valueColumn: String, orderExpr: String? = nil, baseFilter: String,
-                ascending: Bool, displayKind: ValueKind, unitIDPrefixes: [String] = []) {
+                ascending: Bool, displayKind: ValueKind, unitIDPrefixes: [String] = [],
+                unrankedTieValue: Double? = nil, unrankedTieCount: Int? = nil) {
         self.factID = factID; self.title = title; self.note = note
         self.state = state; self.county = county; self.unitIDPrefixes = unitIDPrefixes
         self.valueColumn = valueColumn; self.orderExpr = orderExpr ?? valueColumn
         self.baseFilter = baseFilter; self.ascending = ascending; self.displayKind = displayKind
+        self.unrankedTieValue = unrankedTieValue; self.unrankedTieCount = unrankedTieCount
     }
 }
 

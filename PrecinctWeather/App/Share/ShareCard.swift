@@ -357,9 +357,9 @@ enum ShareCardRenderer {
     }
 }
 
-/// Top-right button on the expanded panel. It opens the preview screen immediately and lets that
-/// screen do the rendering: the map hero is a network fetch, so rendering before presenting would
-/// leave the button hanging with nothing on screen.
+/// Top-right button in the expanded profile hero. It opens the preview screen immediately and lets
+/// that screen do the rendering: the map hero is a network fetch, so rendering before presenting
+/// would leave the button hanging with nothing on screen.
 struct ShareCardButton: View {
     let profile: PrecinctProfile
     let rings: [[CLLocationCoordinate2D]]
@@ -375,6 +375,8 @@ struct ShareCardButton: View {
                 .frame(width: 34, height: 34)
                 .background(Circle().fill(Color(.secondarySystemBackground)))
         }
+        .frame(width: 44, height: 44)
+        .contentShape(Rectangle())
         .buttonStyle(.plain)
         .accessibilityLabel("Share this precinct")
         .sheet(isPresented: $showPreview) {

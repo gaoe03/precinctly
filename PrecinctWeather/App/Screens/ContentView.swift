@@ -137,7 +137,7 @@ struct ContentView: View {
                 }
                 check("NY fact targets resolve by exact unit ID", exactFactTargets)
                 for f in nyFacts.prefix(6) { print("SELFTEST info NY: \(f.id) = \(f.value) at \(f.place)") }
-                if let spec = nyFacts.first(where: { $0.leaderboard != nil })?.leaderboard {
+                if let spec = nyFacts.first(where: { $0.leaderboard != nil && $0.id != "income" })?.leaderboard {
                     let rows = db.topPrecincts(spec)
                     check("NY '\(spec.title)' leaderboard 25 rows (got \(rows.count))", rows.count == 25)
                     check("NY leaderboard targets resolve by exact unit ID", rows.allSatisfy {
@@ -321,7 +321,7 @@ struct ContentView: View {
                     Spacer(minLength: 12)
                     actionControls
                 }
-                stateSelector(width: 180)
+                stateSelector
             }
         } else {
             ZStack {
@@ -330,13 +330,13 @@ struct ContentView: View {
                     Spacer(minLength: 12)
                     actionControls
                 }
-                stateSelector(width: 174)   // fits the longest coverage-area label without truncating
+                stateSelector
             }
             .frame(height: 44)
         }
     }
 
-    private func stateSelector(width: CGFloat) -> some View {
+    private var stateSelector: some View {
         Menu {
             ForEach(appStates) { st in
                 Button {
@@ -352,16 +352,22 @@ struct ContentView: View {
             Divider()
             Button("More coverage areas soon") {}.disabled(true)
         } label: {
-            controlChrome(
-                HStack(spacing: 4) {
-                    Text(stateName(model.selectedState)).font(.subheadline.weight(.semibold))
-                        .lineLimit(1).minimumScaleFactor(0.7)
-                    Image(systemName: "chevron.down").font(.caption2)
-                }
-                .padding(.horizontal, 16)
-                // Matches the 44pt icon controls so the whole top row sits on one line.
-                .frame(width: width, height: 44)
-            )
+            // Keep Menu's host stable while the visible capsule follows its label. UIKit keeps
+            // the host's snapshot during dismissal. If the host itself shrinks for "Texas", a
+            // later DMV label can be clipped to that old rectangle for one frame.
+            ZStack {
+                Color.clear.frame(width: 168, height: 44)
+                controlChrome(
+                    HStack(spacing: 4) {
+                        Text(stateName(model.selectedState)).font(.subheadline.weight(.semibold))
+                            .lineLimit(1).minimumScaleFactor(0.7)
+                        Image(systemName: "chevron.down").font(.caption2)
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(height: 44)
+                )
+            }
+            .frame(width: 168, height: 44)
         }
         .accessibilityLabel("Switch coverage area, currently \(stateName(model.selectedState))")
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)

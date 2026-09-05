@@ -506,8 +506,9 @@ public final class PrecinctDB {
 
         // For cap/ceiling facts: how big the tie at the displayed value is (e.g. how many precincts
         // sit at the $250k income cap or round to 100% renter), shown as a "N tied" chip. Only surface
-        // a real crowd (3+); 1–2 isn't one. Every fact still gets a full "see all" list regardless.
-        func tieCnt(_ tie: Tie?, filter: String) -> Int? {
+        // a real crowd (3+); 1–2 isn't one. Income overrides that threshold because even a single
+        // top-coded value needs the complete capped-group contract.
+        func tieCnt(_ tie: Tie?, filter: String, minimum: Int = 3) -> Int? {
             guard let tie else { return nil }
             let sql = "SELECT COUNT(*) FROM precincts WHERE \(scope)\(filter.isEmpty ? "" : " AND \(filter)") AND \(tie.band)"
             var s: OpaquePointer?
@@ -516,7 +517,7 @@ public final class PrecinctDB {
             bindTexts(s, scopeBinds)
             guard sqlite3_step(s) == SQLITE_ROW else { return nil }
             let c = Int(sqlite3_column_int(s, 0))
-            return c >= 3 ? c : nil
+            return c >= minimum ? c : nil
         }
 
         // Best precinct by a single column. Ties broken by population (then unit_id) so the
@@ -559,13 +560,17 @@ public final class PrecinctDB {
                          orderExpr: String, displayExpr: String, ascending: Bool,
                          filter: String, displayKind: LeaderboardSpec.ValueKind,
                          pairKey: String? = nil, subtitle: String? = nil, tie: Tie? = nil,
+                         unrankedTieValue: Double? = nil, minimumTieCount: Int = 3,
                          fmt: (Double) -> String) {
+            let exactTieCount = tieCnt(tie, filter: filter, minimum: minimumTieCount)
+            let hasUnrankedTie = unrankedTieValue != nil && exactTieCount != nil
             let sql = """
                 SELECT unit_id, borough, state, precinct_name, (\(displayExpr)) AS v,
                        (min_lon + max_lon) / 2.0, (min_lat + max_lat) / 2.0
                 FROM precincts
                 WHERE \(scope) AND (\(displayExpr)) IS NOT NULL\(filter.isEmpty ? "" : " AND \(filter)")
-                ORDER BY (\(orderExpr)) \(ascending ? "ASC" : "DESC"), pop_total DESC, unit_id ASC LIMIT 1
+                ORDER BY (\(orderExpr)) \(ascending ? "ASC" : "DESC"),
+                         \(hasUnrankedTie ? "" : "pop_total DESC, ")unit_id ASC LIMIT 1
                 """
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
@@ -574,17 +579,20 @@ public final class PrecinctDB {
             guard sqlite3_step(stmt) == SQLITE_ROW else { return }
             let place = placeStr(text(stmt, 1) ?? "", text(stmt, 2) ?? "", text(stmt, 3) ?? "")
             let lb = LeaderboardSpec(factID: id, title: title,
-                                     note: tie?.note ?? "The top precincts here, ranked.",
+                                     note: exactTieCount.flatMap { _ in tie?.note }
+                                         ?? "The top precincts here, ranked.",
                                      state: state, county: county,
                                      valueColumn: displayExpr, orderExpr: orderExpr, baseFilter: filter,
                                      ascending: ascending, displayKind: displayKind,
-                                     unitIDPrefixes: leaderboardPrefixes)
+                                     unitIDPrefixes: leaderboardPrefixes,
+                                     unrankedTieValue: exactTieCount == nil ? nil : unrankedTieValue,
+                                     unrankedTieCount: unrankedTieValue == nil ? nil : exactTieCount)
             facts.append(FunFact(id: id, icon: icon, title: title,
                                  value: fmt(sqlite3_column_double(stmt, 4)), place: place,
                                  unitID: text(stmt, 0),
                                  lat: sqlite3_column_double(stmt, 6), lon: sqlite3_column_double(stmt, 5),
                                  category: category, kind: kind, pairKey: pairKey, subtitle: subtitle,
-                                 tieCount: tieCnt(tie, filter: filter), leaderboard: lb))
+                                 tieCount: exactTieCount, leaderboard: lb))
         }
 
         // Senate-vs-President crossover (NY/MA only; CA has no senate data).
@@ -693,7 +701,8 @@ public final class PrecinctDB {
                     orderExpr: "income_median", displayExpr: "income_median",
                     ascending: false, filter: pop, displayKind: .money, pairKey: "income",
                     tie: ("income_median", "income_median = 250001", .money,
-                          "The Census caps reported income at $250k, so the top precincts tie at the ceiling.")) { money($0) }
+                          "The Census caps reported income at $250k, so the top precincts tie at the ceiling."),
+                    unrankedTieValue: 250001, minimumTieCount: 1) { money($0) }
         top("incomeLow", "dollarsign.circle", "Lowest income", column: "income_median",
             category: .wealth, kind: .rangeLow, ascending: true,
             filter: "\(popStrict) AND income_median >= 10000", displayKind: .money, pairKey: "income") { money($0) }
@@ -765,7 +774,8 @@ public final class PrecinctDB {
 
     /// The top precincts for a fact, ranked by that fact's own metric (the "see all" list). Uses the
     /// SAME scope + size/sanity filter as the card, so the surfaced winner is row 1. Lazy — only
-    /// called when the user taps "see all". Population breaks ties so the order is deterministic.
+    /// called when the user taps "see all". A declared leading tie is returned in full, ordered
+    /// neutrally by unit ID, followed by the bounded next rows. Other leaderboards stay bounded.
     public func topPrecincts(_ spec: LeaderboardSpec, limit: Int = 25) -> [LeaderRow] {
         guard let boundedLimit = Self.boundedLimit(limit, maximum: 100) else { return [] }
         let scope = spec.unitIDPrefixes.isEmpty
@@ -774,6 +784,46 @@ public final class PrecinctDB {
         let scopeBinds = spec.unitIDPrefixes.isEmpty
             ? (spec.county.map { [spec.state, $0] } ?? [spec.state])
             : spec.unitIDPrefixes.map { "\($0)-%" }
+
+        func rows(extraFilter: String, order: String, limit: Int?) -> [LeaderRow] {
+            let sql = """
+                SELECT unit_id, borough, state, precinct_name, \(spec.valueColumn),
+                       (min_lon + max_lon) / 2.0, (min_lat + max_lat) / 2.0
+                FROM precincts
+                WHERE \(scope) AND \(spec.baseFilter) AND (\(spec.orderExpr)) IS NOT NULL
+                  AND \(extraFilter)
+                ORDER BY \(order)
+                \(limit == nil ? "" : "LIMIT ?")
+                """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            bindTexts(stmt, scopeBinds)
+            if let limit {
+                sqlite3_bind_int(stmt, Int32(scopeBinds.count + 1), Int32(limit))
+            }
+            var out: [LeaderRow] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                guard let uid = text(stmt, 0) else { continue }
+                out.append(LeaderRow(id: uid, borough: text(stmt, 1) ?? "", state: text(stmt, 2) ?? "",
+                                     precinctName: text(stmt, 3) ?? "",
+                                     value: sqlite3_column_double(stmt, 4),
+                                     lat: sqlite3_column_double(stmt, 6), lon: sqlite3_column_double(stmt, 5)))
+            }
+            return out
+        }
+
+        if let tieValue = spec.unrankedTieValue, let tieCount = spec.unrankedTieCount, tieCount > 0 {
+            let exactValue = String(format: "%.17g", tieValue)
+            let tied = rows(extraFilter: "(\(spec.orderExpr)) = \(exactValue)",
+                            order: "unit_id ASC", limit: nil)
+            let comparison = spec.ascending ? ">" : "<"
+            let ranked = rows(extraFilter: "(\(spec.orderExpr)) \(comparison) \(exactValue)",
+                              order: "(\(spec.orderExpr)) \(spec.ascending ? "ASC" : "DESC"), pop_total DESC, unit_id ASC",
+                              limit: Int(boundedLimit))
+            return tied + ranked
+        }
+
         let sql = """
             SELECT unit_id, borough, state, precinct_name, \(spec.valueColumn),
                    (min_lon + max_lon) / 2.0, (min_lat + max_lat) / 2.0
