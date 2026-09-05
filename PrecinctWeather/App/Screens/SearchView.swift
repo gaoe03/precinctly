@@ -1,5 +1,6 @@
 import SwiftUI
 import MapKit
+import PrecinctKit
 
 // MARK: - Address and place search
 
@@ -15,10 +16,14 @@ struct SearchView: View {
                "Riverdale", "St. George", "Flushing", "Park Slope"],
         "CA": ["San Francisco", "Downtown LA", "San Diego", "Sacramento",
                "Berkeley", "Santa Monica", "Fresno", "Irvine"],
+        "CO": ["Denver", "Colorado Springs", "Aurora", "Fort Collins",
+               "Boulder", "Pueblo", "Grand Junction", "Greeley"],
         "MA": ["Boston", "Cambridge", "Worcester", "Springfield",
                "Quincy", "Lowell", "Salem", "Brookline"],
         "TX": ["Austin", "Downtown Houston", "Dallas", "San Antonio",
                "Fort Worth", "El Paso", "Arlington", "Corpus Christi"],
+        "OR": ["Portland", "Salem", "Eugene", "Bend",
+               "Medford", "Hillsboro", "Gresham", "Corvallis"],
         "DMV": ["Washington, DC", "Bethesda", "Silver Spring", "Arlington",
                 "Alexandria", "Fairfax", "Reston", "Rockville"],
     ]
@@ -75,7 +80,15 @@ struct SearchView: View {
                         noticeView(
                             icon: "mappin.slash",
                             title: "Outside covered areas",
-                            detail: "Precinctly currently covers California, Massachusetts, New York, Texas, and the DMV (Washington, DC, Montgomery and Prince George's Counties, and Northern Virginia). Try another address, or close search to explore the map."
+                            detail: "Precinctly currently covers California, Colorado, Massachusetts, New York, Oregon, Texas, and the DMV (Washington, DC, Montgomery and Prince George's Counties, and Northern Virginia). Try another address, or close search to explore the map."
+                        ) {
+                            Button("Clear search") { query = "" }
+                        }
+                    case .couldNotPinpoint:
+                        noticeView(
+                            icon: "mappin.and.ellipse",
+                            title: "Couldn't pinpoint a precinct",
+                            detail: "This place is near covered precincts, but its map point doesn't land inside one. Try a nearby address, or close search and tap the map."
                         ) {
                             Button("Clear search") { query = "" }
                         }
@@ -185,7 +198,8 @@ struct SearchView: View {
         if model.selectBySearch(lat: lat, lon: lon) {
             dismiss()
         } else {
-            search.notice = .outOfCoverage
+            search.notice = PrecinctDB.shared.hasPrecincts(nearLon: lon, lat: lat)
+                ? .couldNotPinpoint : .outOfCoverage
         }
     }
 }
@@ -193,6 +207,7 @@ struct SearchView: View {
 enum SearchNotice {
     case searchFailed     // network/MapKit failure: retry makes sense
     case outOfCoverage    // a real place, just outside the loaded states: not an error
+    case couldNotPinpoint // near covered polygons, but the result's representative point misses
 }
 
 private struct PlaceResolution {
@@ -307,9 +322,11 @@ private final class PlaceSearchModel: NSObject, ObservableObject {
         let span: MKCoordinateSpan
         switch state {
         case "CA": span = .init(latitudeDelta: 10, longitudeDelta: 12)
+        case "CO": span = .init(latitudeDelta: 7, longitudeDelta: 8)
         case "TX": span = .init(latitudeDelta: 11, longitudeDelta: 14)
         case "NY": span = .init(latitudeDelta: 5, longitudeDelta: 6)
         case "MA": span = .init(latitudeDelta: 3, longitudeDelta: 4)
+        case "OR": span = .init(latitudeDelta: 7, longitudeDelta: 8)
         case "DMV": span = .init(latitudeDelta: 1.4, longitudeDelta: 1.7)
         default: span = .init(latitudeDelta: 8, longitudeDelta: 8)
         }

@@ -15,13 +15,15 @@ final class BaselineContractTests: XCTestCase {
     }
     private let coords: [String: (lat: Double, lon: Double)] = [
         "Brooklyn": (40.6782, -73.9442),
+        "Clackamas": (45.40891980198354, -122.70067593180136),
+        "Denver": (39.7392, -104.9903),
         "Manhattan": (40.7580, -73.9850),
         "Harris": (29.7604, -95.3698),
         "San Francisco": (37.7765, -122.4222),
     ]
 
     func testEveryCoveredStateStillHasItsBaseline() {
-        for state in ["NY", "CA", "MA", "TX", "DC", "MD", "VA"] {
+        for state in ["NY", "CA", "CO", "MA", "OR", "TX", "DC", "MD", "VA"] {
             let base = db.baseline(scope: state)
             XCTAssertNotNil(base, "missing state baseline for \(state)")
             XCTAssertEqual(base?.displayName, state)
@@ -32,6 +34,8 @@ final class BaselineContractTests: XCTestCase {
 
     func testCountyAndMetroBaselinesShipped() {
         XCTAssertNotNil(db.baseline(scope: "county|NY|Brooklyn"))
+        XCTAssertNotNil(db.baseline(scope: "county|CO|Denver"))
+        XCTAssertNotNil(db.baseline(scope: "county|OR|Clackamas"))
         XCTAssertNotNil(db.baseline(scope: "county|TX|Harris"))
         XCTAssertNotNil(db.baseline(scope: "metro|NY|New York City"))
         XCTAssertNil(db.baseline(scope: "county|NY|Nowhere"), "an unknown county should not resolve")
@@ -100,6 +104,20 @@ final class BaselineContractTests: XCTestCase {
         XCTAssertEqual(areas.map(\.scope), ["county|TX|\(p.borough)", "TX"])
     }
 
+    func testElectionNullProfilesStillResolveCountyAndStateComparisons() throws {
+        for (unitID, state, county) in [
+            ("41005-:-X000", "OR", "Clackamas"),
+            ("08005-:-4276103350", "CO", "Arapahoe"),
+        ] {
+            let profile = try XCTUnwrap(db.precinct(unitID: unitID)?.profile)
+            XCTAssertNil(profile.leanDemShare)
+            XCTAssertEqual(profile.state, state)
+            XCTAssertEqual(profile.borough, county)
+            XCTAssertEqual(db.comparisonAreas(for: profile).map(\.scope),
+                           ["county|\(state)|\(county)", state])
+        }
+    }
+
     /// The rural case, and the reason the floor exists: in a county with a handful of precincts
     /// the precinct IS most of the baseline, so comparing to it says nothing.
     func testATinyCountyFallsBackToTheStateAlone() {
@@ -118,7 +136,10 @@ final class BaselineContractTests: XCTestCase {
     }
 
     func testTheStateIsAlwaysOfferedSoTheListIsNeverEmpty() {
-        for (state, borough) in [("NY", "Brooklyn"), ("CA", "San Francisco"), ("TX", "Harris")] {
+        for (state, borough) in [
+            ("NY", "Brooklyn"), ("CA", "San Francisco"), ("CO", "Denver"),
+            ("OR", "Clackamas"), ("TX", "Harris"),
+        ] {
             guard let p = profile(state: state, borough: borough) else { continue }
             let areas = db.comparisonAreas(for: p)
             XCTAssertFalse(areas.isEmpty)

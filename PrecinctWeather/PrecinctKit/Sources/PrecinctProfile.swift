@@ -4,9 +4,9 @@ import Foundation
 /// Settings, the widget placeholder) read these, so adding a state is a one-line change.
 public enum Coverage {
     /// Abbreviated list for tight surfaces (toasts, widgets).
-    public static let abbrList = "NY, CA, MA, TX, and DMV (DC, MD, VA)"
+    public static let abbrList = "NY, CA, CO, MA, OR, TX, and DMV (DC, MD, VA)"
     /// Full-name sentence for calm surfaces (onboarding, Settings).
-    public static let namesSentence = "Precinctly covers New York, California, Massachusetts, Texas, and the DMV (Washington, DC, Montgomery and Prince George's Counties, and Northern Virginia)."
+    public static let namesSentence = "Precinctly covers New York, California, Colorado, Massachusetts, Oregon, Texas, and the DMV (Washington, DC, Montgomery and Prince George's Counties, and Northern Virginia)."
 }
 
 /// A map/data coverage area. Most areas are backed by one state column in the
@@ -202,10 +202,10 @@ public struct PrecinctProfile: Codable, Equatable, Sendable {
             .filter { $0.1 > 0 }.sorted { $0.1 > $1.1 }
     }
 
-    /// e.g. "D+18" / "R+5" / "Even" from the latest available president. Tight form matches the
-    /// trajectory bars, By-the-Numbers, the widgets, and the site.
+    /// e.g. "D+18" / "R+5" / "Even" from the latest available president. Returns explicit
+    /// unavailable wording when this precinct has no election result.
     public var leanShort: String {
-        guard let s = leanDemShare else { return "—" }
+        guard let s = leanDemShare else { return "No election data" }
         let margin = Int((abs(s - 0.5) * 200).rounded())
         if margin < 1 { return "Even" }
         return (s >= 0.5 ? "D+" : "R+") + "\(margin)"

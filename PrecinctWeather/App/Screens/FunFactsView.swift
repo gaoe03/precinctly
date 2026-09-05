@@ -93,7 +93,7 @@ struct FunFactsView: View {
                 }
 
                 Section {
-                    Text("2024 presidential results where available. DC uses 2020. Demographics use the 2020 Census and ACS.")
+                    Text("Presidential results use each precinct's latest available election. Demographics use the 2020 Census and ACS.")
                         .font(.caption2).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .center)
                         .listRowBackground(Color.clear).listRowSeparator(.hidden)
@@ -803,7 +803,7 @@ struct ByNumbersExport: View {
                         }
                     }
                 }
-                Text("2024 presidential results where available. DC uses 2020. Demographics use the 2020 Census and ACS.")
+                Text("Presidential results use each precinct's latest available election. Demographics use the 2020 Census and ACS.")
                     .font(.caption2).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
             }

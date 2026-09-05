@@ -91,9 +91,9 @@ struct BottomPanel: View {
                     ShareCardButton(profile: p, rings: model.selectedRings,
                                     trend: model.presidentTrend, baseline: model.stateBaseline)
                         .padding(.trailing, 12)
-                        // Keep the 34pt share circle centered in the 28pt handle row. A positive
-                        // top inset put the button noticeably below the grab handle.
-                        .padding(.top, -3)
+                        // Keep the whole circle inside the panel's white surface. A negative inset
+                        // lets it float over the map, which gets especially obvious while scrolling.
+                        .padding(.top, 8)
                         .transition(.opacity)
                 }
             }
@@ -185,7 +185,8 @@ private struct ProfileContent: View {
                         WhoLivesHere(profile: p)
                         MoneyEducation(profile: p, baseline: baseline)
                         MoreStats(profile: p)
-                        Text("\(p.leanYear.map(String.init) ?? "Latest") presidential vote. Demographics use the 2020 Census and ACS.")
+                        Text(p.leanYear.map { "\($0) presidential vote. Demographics use the 2020 Census and ACS." }
+                             ?? "Election data is unavailable for this precinct. Demographics use the 2020 Census and ACS.")
                             .font(.caption2).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .center)
                             .padding(.top, 8)
@@ -334,14 +335,12 @@ private struct SheetSmallStat: View {
 private struct LeanHero: View {
     let profile: PrecinctProfile
     private var color: Color { Palette.lean(profile.leanDemShare) }
-    private var labelText: String? {
-        profile.leanLabel ?? (profile.leanDemShare == nil ? "No election data" : nil)
-    }
+    private var labelText: String? { profile.leanLabel }
     private var accessibilityText: String {
         var parts = [
-            "\(countyDisplay(profile.borough)), \(profile.state)" + (profile.precinctName.map { ", \(precinctTitleDisplay($0))" } ?? ""),
-            "Political lean \(profile.leanShort)"
+            "\(countyDisplay(profile.borough)), \(profile.state)" + (profile.precinctName.map { ", \(precinctTitleDisplay($0))" } ?? "")
         ]
+        parts.append(profile.leanDemShare == nil ? "No election data" : "Political lean \(profile.leanShort)")
         if let labelText {
             parts.append(labelText + (profile.leanYear.map { " in \($0)" } ?? ""))
         }

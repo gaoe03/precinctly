@@ -105,6 +105,35 @@ public final class PrecinctDB {
         return nil
     }
 
+    /// Place search results can use a representative city coordinate that falls in a tiny seam
+    /// between source polygons. Keep normal lookup strict, then snap only search results to the
+    /// nearest precinct when at least two precinct boundaries are no more than 10 meters away,
+    /// their nearest points lie on opposite sides of the search coordinate, and nearby geometry
+    /// occupies most directions around it. The local enclosure check rejects outer corners where
+    /// two boundary points alone can appear to bracket a point outside coverage.
+    public func lookupForSearch(lon: Double, lat: Double, maxSnapMeters: Double = 10)
+        -> (profile: PrecinctProfile, rings: [[CLLocationCoordinate2D]])? {
+        if let exact = lookup(lon: lon, lat: lat) { return exact }
+        guard lon.isFinite, lat.isFinite, (-90...90).contains(lat),
+              maxSnapMeters.isFinite, maxSnapMeters > 0 else { return nil }
+
+        let snapMeters = min(maxSnapMeters, 10)
+        var matches: [(profile: PrecinctProfile, wkb: Data, offset: WKBGeometry.BoundaryOffset)] = []
+        for id in nearbyCandidateIDs(lon: lon, lat: lat, withinMeters: snapMeters) {
+            guard let (profile, wkb) = row(id: id),
+                  let offset = WKBGeometry.nearestBoundaryOffsetMeters(wkb, lon: lon, lat: lat),
+                  offset.distance <= snapMeters else { continue }
+            matches.append((profile, wkb, offset))
+        }
+        guard matches.count >= 2,
+              WKBGeometry.boundariesBracketPoint(matches.map(\.offset)),
+              WKBGeometry.geometryLocallySurroundsPoint(
+                matches.map(\.wkb), lon: lon, lat: lat, radiusMeters: snapMeters
+              ),
+              let best = matches.min(by: { $0.offset.distance < $1.offset.distance }) else { return nil }
+        return (best.profile, WKBGeometry.exteriorRings(best.wkb))
+    }
+
     /// Exact selection for rows already identified by a leaderboard or other DB query.
     /// This avoids re-resolving a bounding-box midpoint that may sit outside a concave precinct.
     public func precinct(unitID: String)
@@ -153,6 +182,32 @@ public final class PrecinctDB {
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_double(stmt, 1, lon)
         sqlite3_bind_double(stmt, 2, lat)
+        var ids: [Int32] = []
+        while sqlite3_step(stmt) == SQLITE_ROW { ids.append(sqlite3_column_int(stmt, 0)) }
+        return ids
+    }
+
+    private func nearbyCandidateIDs(lon: Double, lat: Double, withinMeters meters: Double) -> [Int32] {
+        let latitudeDelta = meters / 111_320
+        let longitudeScale = 111_320 * max(0.01, cos(lat * .pi / 180))
+        let longitudeDelta = meters / longitudeScale
+        let sql = """
+            SELECT r.id FROM precinct_rtree AS r
+            JOIN precincts AS p ON p.rowid = r.id
+            WHERE r.min_lon <= ? AND r.max_lon >= ? AND r.min_lat <= ? AND r.max_lat >= ?
+            ORDER BY p.data_complete DESC,
+                     (p.lean_dem_share IS NOT NULL) DESC,
+                     (p.pop_total IS NOT NULL AND p.pop_total > 0) DESC,
+                     ((p.max_lon - p.min_lon) * (p.max_lat - p.min_lat)) ASC,
+                     r.id ASC
+            """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_double(stmt, 1, lon + longitudeDelta)
+        sqlite3_bind_double(stmt, 2, lon - longitudeDelta)
+        sqlite3_bind_double(stmt, 3, lat + latitudeDelta)
+        sqlite3_bind_double(stmt, 4, lat - latitudeDelta)
         var ids: [Int32] = []
         while sqlite3_step(stmt) == SQLITE_ROW { ids.append(sqlite3_column_int(stmt, 0)) }
         return ids

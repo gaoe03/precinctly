@@ -13,7 +13,7 @@ struct PrecinctEntry: TimelineEntry {
     let baseline: Baseline?                  // the area the stats are measured against
     let shiftPts: Int?                       // presidential margin shift, earliest→latest (+ = toward Dem)
     let shiftSinceYear: Int?                 // the earliest year in that span (usually 2016)
-    var outOfCoverage = false                // had a fix, but it fell outside NY/CA/MA/TX
+    var outOfCoverage = false                // had a fix, but it fell outside covered areas
     /// When the data was actually read. `date` is when WidgetKit should *render* this entry, and
     /// one fetch fans out into several render times, so the two differ. Their gap is the age the
     /// widget reports.
@@ -557,11 +557,16 @@ struct PrecinctLockView: View {
             Text(inlineText(p))
         case .accessoryCircular:
             // The lean margin itself, not a capacity ring (which reads as a battery).
+            let accessibilityLabel: String = {
+                guard let p else { return "No precinct data" }
+                return p.leanDemShare == nil ? "No election data" : p.leanShort
+            }()
             ZStack {
                 AccessoryWidgetBackground()
-                Text(p?.leanShort ?? "—")
+                Text(p == nil ? "No data" : p?.leanDemShare == nil ? "No election" : p?.leanShort ?? "No data")
                     .font(.system(.headline, design: .serif)).widgetAccentable()
                     .minimumScaleFactor(0.5).lineLimit(1).padding(4)
+                    .accessibilityLabel(accessibilityLabel)
             }
         default: // accessoryRectangular
             VStack(alignment: .leading, spacing: 1) {
@@ -569,7 +574,9 @@ struct PrecinctLockView: View {
                 Text(p.map { "\(countyDisplay($0.borough)), \($0.state)" }
                      ?? (entry.outOfCoverage ? "No precinct here yet" : "Open Precinctly"))
                     .font(.caption2).lineLimit(1)
-                Text("\(p?.leanShort ?? "—")" + (rectSubline(p).map { ", \($0)" } ?? "")).font(.caption).lineLimit(1)
+                Text((p?.leanShort ?? "No precinct data")
+                     + (rectSubline(p).map { ", \($0)" } ?? ""))
+                    .font(.caption).lineLimit(1)
                 if let p, let top = p.raceBreakdown.first {
                     Text("\(pctStr(top.value)) \(top.label)" + (p.incomeMedian.map { ", \(moneyShort($0))" } ?? ""))
                         .font(.caption2).lineLimit(1)

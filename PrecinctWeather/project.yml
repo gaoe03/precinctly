@@ -28,8 +28,8 @@ schemes:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "1.02"
-    CURRENT_PROJECT_VERSION: "3"
+    MARKETING_VERSION: "1.03"
+    CURRENT_PROJECT_VERSION: "4"
     GENERATE_INFOPLIST_FILE: NO
     TARGETED_DEVICE_FAMILY: "1"
     CODE_SIGN_STYLE: Automatic
@@ -58,6 +58,7 @@ targets:
     sources:
       - PrecinctKit/Tests
       - App/Support/SearchResolutionGate.swift
+      - App/Share/ShareCardElectionPresentation.swift
       - Widget/WidgetLocationPolicy.swift
     settings:
       base:

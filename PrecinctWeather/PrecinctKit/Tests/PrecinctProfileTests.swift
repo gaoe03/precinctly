@@ -47,7 +47,7 @@ final class PrecinctProfileTests: XCTestCase {
     }
 
     func testLeanShortRoundingBoundaries() {
-        XCTAssertEqual(profile(share: nil).leanShort, "—")
+        XCTAssertEqual(profile(share: nil).leanShort, "No election data")
         XCTAssertEqual(profile(share: 0.5).leanShort, "Even")
         XCTAssertEqual(profile(share: 0.502).leanShort, "Even")
         // No space after the letter. This is the form the app, the widgets, the share card and
@@ -56,6 +56,31 @@ final class PrecinctProfileTests: XCTestCase {
         XCTAssertEqual(profile(share: 0.504).leanShort, "D+1")
         XCTAssertEqual(profile(share: 0).leanShort, "R+100")
         XCTAssertEqual(profile(share: 1).leanShort, "D+100")
+    }
+
+    func testShareCardElectionPresentationKeepsNullProfilesNeutral() {
+        let missing = ShareCardElectionPresentation(profile: profile(share: nil))
+        XCTAssertEqual(missing.headline, "No election data")
+        XCTAssertNil(missing.detail)
+        XCTAssertEqual(missing.footer, "Election data unavailable. 2020 Census and ACS.")
+        XCTAssertNil(missing.voteShare)
+        XCTAssertEqual(missing.tint, .neutral)
+        XCTAssertFalse(missing.showsVoteBar)
+
+        let available = ShareCardElectionPresentation(profile: .sample)
+        XCTAssertEqual(available.headline, "D+36")
+        XCTAssertEqual(available.detail, "Solid Dem in 2024")
+        XCTAssertEqual(available.footer, "2024 presidential vote. 2020 Census and ACS.")
+        XCTAssertEqual(available.voteShare, 0.681)
+        XCTAssertEqual(available.tint, .partisan(0.681))
+        XCTAssertTrue(available.showsVoteBar)
+    }
+
+    func testCoverageCopyIncludesOregonAndColorado() {
+        XCTAssertTrue(Coverage.abbrList.contains("OR"))
+        XCTAssertTrue(Coverage.abbrList.contains("CO"))
+        XCTAssertTrue(Coverage.namesSentence.contains("Oregon"))
+        XCTAssertTrue(Coverage.namesSentence.contains("Colorado"))
     }
 
     func testRaceBreakdownFiltersNonPositiveValuesAndSortsDescending() {

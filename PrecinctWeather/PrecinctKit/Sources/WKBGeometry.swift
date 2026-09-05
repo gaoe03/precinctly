@@ -6,6 +6,13 @@ import CoreLocation
 /// This is the on-device equivalent of the shapely PIP used in the build pipeline.
 enum WKBGeometry {
 
+    struct BoundaryOffset {
+        let east: Double
+        let north: Double
+
+        var distance: Double { hypot(east, north) }
+    }
+
     private struct Reader {
         let bytes: [UInt8]
         var i = 0
@@ -146,15 +153,111 @@ enum WKBGeometry {
         return reader.valid && reader.i == reader.bytes.count ? result : []
     }
 
-    /// True if (lon, lat) is inside the geometry (inside an exterior ring and not in a hole).
-    static func contains(_ data: Data, lon: Double, lat: Double) -> Bool {
-        guard lon.isFinite, lat.isFinite else { return false }
-        for poly in polygons(data) {
+    private static func contains(_ parsed: [Polygon], lon: Double, lat: Double) -> Bool {
+        for poly in parsed {
             guard let ext = poly.first, ringLocation(ext, lon, lat) == .inside else { continue }
             if poly.dropFirst().contains(where: { ringLocation($0, lon, lat) != .outside }) { continue }
             return true
         }
         return false
+    }
+
+    /// True if (lon, lat) is inside the geometry (inside an exterior ring and not in a hole).
+    static func contains(_ data: Data, lon: Double, lat: Double) -> Bool {
+        guard lon.isFinite, lat.isFinite else { return false }
+        return contains(polygons(data), lon: lon, lat: lat)
+    }
+
+    /// Offset from a point to the nearest point on the geometry boundary, measured in meters.
+    /// Search uses the direction as well as the distance so multiple nearby precincts must
+    /// actually surround a source-data seam instead of merely sharing one outer coverage edge.
+    static func nearestBoundaryOffsetMeters(_ data: Data, lon: Double, lat: Double) -> BoundaryOffset? {
+        guard lon.isFinite, lat.isFinite, (-90...90).contains(lat) else { return nil }
+        let parsed = polygons(data)
+        guard !parsed.isEmpty else { return nil }
+        if contains(parsed, lon: lon, lat: lat) { return BoundaryOffset(east: 0, north: 0) }
+
+        let metersPerLatitudeDegree = 111_320.0
+        let metersPerLongitudeDegree = metersPerLatitudeDegree
+            * max(0.01, cos(lat * .pi / 180))
+        var bestSquared = Double.infinity
+        var bestOffset: BoundaryOffset?
+
+        for polygon in parsed {
+            for ring in polygon where ring.count >= 2 {
+                for index in 1..<ring.count {
+                    let start = ring[index - 1]
+                    let end = ring[index]
+                    let ax = (start.lon - lon) * metersPerLongitudeDegree
+                    let ay = (start.lat - lat) * metersPerLatitudeDegree
+                    let bx = (end.lon - lon) * metersPerLongitudeDegree
+                    let by = (end.lat - lat) * metersPerLatitudeDegree
+                    let dx = bx - ax
+                    let dy = by - ay
+                    let lengthSquared = dx * dx + dy * dy
+                    let t = lengthSquared == 0 ? 0 : min(1, max(0, -(ax * dx + ay * dy) / lengthSquared))
+                    let closestX = ax + t * dx
+                    let closestY = ay + t * dy
+                    let squared = closestX * closestX + closestY * closestY
+                    if squared < bestSquared {
+                        bestSquared = squared
+                        bestOffset = BoundaryOffset(east: closestX, north: closestY)
+                    }
+                }
+            }
+        }
+        return bestSquared.isFinite ? bestOffset : nil
+    }
+
+    /// Shortest distance from a point to the geometry boundary, measured in meters.
+    static func distanceMeters(_ data: Data, lon: Double, lat: Double) -> Double? {
+        nearestBoundaryOffsetMeters(data, lon: lon, lat: lat)?.distance
+    }
+
+    /// True when at least one pair of nearest boundaries lies on opposite sides of the point.
+    /// Two boundaries on the same side describe an outer coverage edge, not an internal seam.
+    static func boundariesBracketPoint(_ offsets: [BoundaryOffset]) -> Bool {
+        for firstIndex in offsets.indices {
+            let first = offsets[firstIndex]
+            guard first.distance > 0 else { continue }
+            for secondIndex in offsets.indices where secondIndex > firstIndex {
+                let second = offsets[secondIndex]
+                guard second.distance > 0 else { continue }
+                if first.east * second.east + first.north * second.north < 0 {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    /// True when nearby precinct geometry occupies nearly every direction around a point.
+    /// Internal source seams are narrow, so a 10-meter ring crosses precinct polygons in all
+    /// but the directions that run along the seam. At an outer coverage edge, a broad outward
+    /// arc remains uncovered even when two precinct corners happen to bracket the point.
+    static func geometryLocallySurroundsPoint(_ geometries: [Data], lon: Double, lat: Double,
+                                              radiusMeters: Double) -> Bool {
+        guard !geometries.isEmpty, lon.isFinite, lat.isFinite, (-90...90).contains(lat),
+              radiusMeters.isFinite, radiusMeters > 0 else { return false }
+
+        let sampleCount = 16
+        let requiredCoveredSamples = 12
+        let metersPerLatitudeDegree = 111_320.0
+        let metersPerLongitudeDegree = metersPerLatitudeDegree
+            * max(0.01, cos(lat * .pi / 180))
+        let parsedGeometries = geometries.map(polygons).filter { !$0.isEmpty }
+        guard !parsedGeometries.isEmpty else { return false }
+        var coveredSamples = 0
+
+        for sample in 0..<sampleCount {
+            let angle = 2 * Double.pi * Double(sample) / Double(sampleCount)
+            let sampleLon = lon + radiusMeters * cos(angle) / metersPerLongitudeDegree
+            let sampleLat = lat + radiusMeters * sin(angle) / metersPerLatitudeDegree
+            if parsedGeometries.contains(where: { contains($0, lon: sampleLon, lat: sampleLat) }) {
+                coveredSamples += 1
+            }
+        }
+        return coveredSamples >= requiredCoveredSamples
     }
 
     /// Exterior rings as coordinate arrays, for drawing on a Map.

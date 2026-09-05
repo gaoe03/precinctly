@@ -7,8 +7,10 @@ import XCTest
 final class PrecinctDBContractTests: XCTestCase {
     private let knownLocations: [(state: String, lat: Double, lon: Double)] = [
         ("CA", 34.0537, -118.2428),
+        ("CO", 39.7390, -104.9900),
         ("MA", 42.3550, -71.0650),
         ("NY", 40.7580, -73.9850),
+        ("OR", 45.5150, -122.6780),
         ("TX", 30.2747, -97.7404),
     ]
 
@@ -30,9 +32,50 @@ final class PrecinctDBContractTests: XCTestCase {
         XCTAssertNil(db.lookup(lon: -74, lat: .infinity))
     }
 
+    func testSearchBridgesOnlyTinyPrecinctSeams() throws {
+        let db = PrecinctDB.shared
+        let midway = (lat: 33.7447024, lon: -117.9863579)
+
+        XCTAssertNil(db.lookup(lon: midway.lon, lat: midway.lat),
+                     "the regression coordinate must exercise the public-data seam")
+        XCTAssertNil(db.lookupForSearch(lon: midway.lon, lat: midway.lat, maxSnapMeters: 0.1))
+        let hit = try XCTUnwrap(db.lookupForSearch(lon: midway.lon, lat: midway.lat))
+        XCTAssertEqual(hit.profile.state, "CA")
+        XCTAssertEqual(hit.profile.borough, "Orange")
+
+        let realCoverageEdges = [
+            ("DMV north", lat: 39.35354691620166, lon: -77.16880099972411),
+            ("CA west", lat: 40.438449348200834, lon: -124.40954716204412),
+            ("NY north", lat: 45.015909915558744, lon: -74.826576),
+            ("OR west", lat: 42.8402723, lon: -124.5530194),
+            ("OR coast corner", lat: 43.3974036628, lon: -124.1901644990),
+            ("CO southwest", lat: 37.3268599, lon: -109.0457985),
+            ("CO north corner", lat: 41.0022035089, lon: -102.9048749282),
+            ("TX south", lat: 25.837119084441248, lon: -97.39450199999999),
+        ]
+        for edge in realCoverageEdges {
+            XCTAssertNil(db.lookup(lon: edge.lon, lat: edge.lat), "\(edge.0) must stay outside")
+            XCTAssertNil(db.lookupForSearch(lon: edge.lon, lat: edge.lat),
+                         "\(edge.0) is an outer coverage edge, not an internal precinct seam")
+        }
+
+        let legitimateHole = (lat: 38.13643764289524, lon: -120.45687093660658)
+        XCTAssertNil(db.lookup(lon: legitimateHole.lon, lat: legitimateHole.lat))
+        XCTAssertNil(db.lookupForSearch(lon: legitimateHole.lon, lat: legitimateHole.lat),
+                     "a deliberate interior ring must not be filled by search snapping")
+
+        XCTAssertNil(db.lookupForSearch(lon: realCoverageEdges[1].lon,
+                                        lat: realCoverageEdges[1].lat,
+                                        maxSnapMeters: 10_000),
+                     "callers cannot expand the search fallback beyond its 10 meter contract")
+
+        XCTAssertNil(db.lookupForSearch(lon: -72.5, lat: 40.0),
+                     "search must not turn a genuinely uncovered location into a precinct")
+    }
+
     func testFunFactsAndLeaderboardsResolveExactPrecincts() {
         let db = PrecinctDB.shared
-        for state in ["CA", "MA", "NY", "TX"] {
+        for state in ["CA", "CO", "MA", "NY", "OR", "TX"] {
             let facts = db.funFacts(state: state)
             XCTAssertFalse(facts.isEmpty, "No facts for \(state)")
             XCTAssertEqual(Set(facts.map(\.id)).count, facts.count, "Duplicate fact IDs for \(state)")
@@ -43,17 +86,46 @@ final class PrecinctDBContractTests: XCTestCase {
                     XCTAssertNotNil(fact.unitID, "Coordinate without unit ID for \(fact.id)")
                 }
                 if let unitID = fact.unitID {
-                    XCTAssertEqual(db.precinct(unitID: unitID)?.profile.unitID, unitID)
+                    let profile = db.precinct(unitID: unitID)?.profile
+                    XCTAssertEqual(profile?.unitID, unitID)
+                    if fact.category == .politics {
+                        XCTAssertNotNil(profile?.leanDemShare,
+                                        "Political fact admitted an election-null precinct in \(state)")
+                    }
                 }
                 if let spec = fact.leaderboard {
                     let rows = db.topPrecincts(spec)
                     XCTAssertFalse(rows.isEmpty, "Empty leaderboard for \(state) \(fact.id)")
                     XCTAssertEqual(rows.first?.id, fact.unitID, "Winner mismatch for \(state) \(fact.id)")
                     for row in rows {
-                        XCTAssertEqual(db.precinct(unitID: row.id)?.profile.unitID, row.id)
+                        let profile = db.precinct(unitID: row.id)?.profile
+                        XCTAssertEqual(profile?.unitID, row.id)
+                        if fact.category == .politics {
+                            XCTAssertNotNil(profile?.leanDemShare,
+                                            "Political leaderboard admitted an election-null precinct in \(state)")
+                        }
                     }
                 }
             }
+        }
+    }
+
+    func testPoliticalNullProfilesKeepDemographicsWithoutPoliticalOutput() throws {
+        let db = PrecinctDB.shared
+        let unitIDs = [
+            "41005-:-X000", "41027-:-XXXX", "41045-:-0019",
+            "08005-:-6276103288", "08005-:-4276103350", "08005-:-6283603359",
+            "08035-:-4303918103",
+        ]
+
+        for unitID in unitIDs {
+            let profile = try XCTUnwrap(db.precinct(unitID: unitID)?.profile, unitID)
+            XCTAssertNil(profile.leanDemShare, unitID)
+            XCTAssertNil(profile.leanYear, unitID)
+            XCTAssertNil(profile.leanVotes, unitID)
+            XCTAssertEqual(profile.leanShort, "No election data", unitID)
+            XCTAssertNotNil(profile.popTotal, unitID)
+            XCTAssertFalse(profile.raceBreakdown.isEmpty, unitID)
         }
     }
 
@@ -136,11 +208,13 @@ final class PrecinctDBContractTests: XCTestCase {
                 database,
                 "SELECT group_concat(state, ',') FROM (SELECT DISTINCT state FROM precincts ORDER BY state)"
             ),
-            "CA,DC,MA,MD,NY,TX,VA"
+            "CA,CO,DC,MA,MD,NY,OR,TX,VA"
         )
         let precinctCount = try intScalar(database, "SELECT count(*) FROM precincts")
-        XCTAssertGreaterThan(precinctCount, 0)
+        XCTAssertEqual(precinctCount, 54_718)
         XCTAssertEqual(try intScalar(database, "SELECT count(*) FROM precinct_rtree"), precinctCount)
+        XCTAssertEqual(try intScalar(database, "SELECT count(DISTINCT borough) FROM precincts WHERE state = 'OR'"), 36)
+        XCTAssertEqual(try intScalar(database, "SELECT count(DISTINCT borough) FROM precincts WHERE state = 'CO'"), 64)
         XCTAssertEqual(
             try intScalar(database, "SELECT count(*) - count(DISTINCT unit_id) FROM precincts"),
             0

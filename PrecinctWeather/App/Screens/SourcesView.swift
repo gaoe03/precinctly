@@ -24,6 +24,10 @@ struct SourcesView: View {
 
             Section("Election and redistricting data") {
                 sourceNote(
+                    "Privately supplied Oregon and Colorado dataset",
+                    "Precinct boundaries and demographic fields for Oregon and Colorado. In Oregon, 1,296 precincts use 2020 presidential results, one uses 2016 results, and three have no usable election result. In Colorado, 3,138 precincts use 2024 results, 21 use 2020 results, and four have no usable election result. Precincts without a usable result keep their demographic profiles but do not show a political lean."
+                )
+                sourceNote(
                     "Privately supplied DMV dataset",
                     "Curated precinct boundaries, election results, and demographic fields for Washington, DC, Montgomery and Prince George's Counties, and Northern Virginia. DC election values use 2020. Maryland and Virginia use the source's latest available results."
                 )

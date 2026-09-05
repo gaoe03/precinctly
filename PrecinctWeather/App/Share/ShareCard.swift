@@ -28,7 +28,16 @@ struct ShareCard: View {
     static let width: CGFloat = 400
     static let mapSize = CGSize(width: 400, height: 224)
 
-    private var lean: Color { Palette.lean(profile.leanDemShare) }
+    private var election: ShareCardElectionPresentation {
+        ShareCardElectionPresentation(profile: profile)
+    }
+
+    private var lean: Color {
+        switch election.tint {
+        case .neutral: ShareCard.Paper.ink
+        case .partisan(let share): Palette.lean(share)
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -36,7 +45,7 @@ struct ShareCard: View {
             VStack(alignment: .leading, spacing: 0) {
                 place
                 headline.padding(.top, 12)
-                if let s = profile.leanDemShare { vote(s).padding(.top, 12) }
+                if let share = election.voteShare { vote(share).padding(.top, 12) }
                 if trend.count >= 2 {
                     section("Presidential trajectory") { TrajectoryStrip(trend: trend) }
                 }
@@ -91,18 +100,14 @@ struct ShareCard: View {
 
     private var headline: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(profile.leanShort)
+            Text(election.headline)
                 .font(.system(size: 46, weight: .heavy, design: .serif))
                 .foregroundStyle(lean)
                 .lineLimit(1).minimumScaleFactor(0.5)
-            if let label = profile.leanLabel {
-                Text(label + (profile.leanYear.map { " in \($0)" } ?? ""))
+            if let detail = election.detail {
+                Text(detail)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(lean)
-            } else if profile.leanDemShare == nil {
-                Text("No election data")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Paper.muted)
             }
         }
     }
@@ -230,7 +235,7 @@ struct ShareCard: View {
                 .font(.system(size: 17, weight: .semibold, design: .serif))
                 .foregroundStyle(Paper.ink)
             Spacer(minLength: 4)
-            Text("\(profile.leanYear.map(String.init) ?? "Latest") presidential vote. 2020 Census and ACS.")
+            Text(election.footer)
                 .font(.system(size: 9))
                 .foregroundStyle(Paper.muted)
                 .lineLimit(1).minimumScaleFactor(0.7)

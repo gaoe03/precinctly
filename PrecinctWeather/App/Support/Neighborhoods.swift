@@ -1,7 +1,7 @@
 import Foundation
 
-/// Offline search corpus: well-known places across the loaded states (NYC
-/// neighborhoods + major CA & MA cities), each with a representative coordinate.
+/// Offline search corpus: well-known places across the loaded states, each with a
+/// representative coordinate.
 /// Tapping one jumps the map there and resolves that precinct.
 /// (Fully on-device — no network geocoding, preserving the privacy posture.)
 struct Neighborhood: Identifiable {
@@ -129,6 +129,15 @@ let searchPlaces: [Neighborhood] = [
     .init(name: "Bakersfield", borough: "Central Valley", state: "CA", lat: 35.373, lon: -119.019),
     .init(name: "Stockton", borough: "Central Valley", state: "CA", lat: 37.958, lon: -121.290),
     .init(name: "Santa Barbara", borough: "Santa Barbara", state: "CA", lat: 34.421, lon: -119.697),
+    // Colorado
+    .init(name: "Denver", borough: "Denver County", state: "CO", lat: 39.7392, lon: -104.9903),
+    .init(name: "Colorado Springs", borough: "El Paso County", state: "CO", lat: 38.8339, lon: -104.8214),
+    .init(name: "Aurora", borough: "Arapahoe County", state: "CO", lat: 39.7294, lon: -104.8319),
+    .init(name: "Fort Collins", borough: "Larimer County", state: "CO", lat: 40.5853, lon: -105.0844),
+    .init(name: "Boulder", borough: "Boulder County", state: "CO", lat: 40.0150, lon: -105.2705),
+    .init(name: "Pueblo", borough: "Pueblo County", state: "CO", lat: 38.2544, lon: -104.6091),
+    .init(name: "Grand Junction", borough: "Mesa County", state: "CO", lat: 39.0639, lon: -108.5506),
+    .init(name: "Greeley", borough: "Weld County", state: "CO", lat: 40.4233, lon: -104.7091),
     // Massachusetts
     .init(name: "Boston", borough: "Boston", state: "MA", lat: 42.360, lon: -71.058),
     .init(name: "Back Bay", borough: "Boston", state: "MA", lat: 42.350, lon: -71.081),
@@ -142,6 +151,15 @@ let searchPlaces: [Neighborhood] = [
     .init(name: "Springfield", borough: "Massachusetts", state: "MA", lat: 42.101, lon: -72.590),
     .init(name: "Lowell", borough: "Massachusetts", state: "MA", lat: 42.633, lon: -71.316),
     .init(name: "Salem", borough: "Massachusetts", state: "MA", lat: 42.519, lon: -70.898),
+    // Oregon
+    .init(name: "Portland", borough: "Multnomah County", state: "OR", lat: 45.5152, lon: -122.6784),
+    .init(name: "Salem", borough: "Marion County", state: "OR", lat: 44.9429, lon: -123.0351),
+    .init(name: "Eugene", borough: "Lane County", state: "OR", lat: 44.0521, lon: -123.0868),
+    .init(name: "Bend", borough: "Deschutes County", state: "OR", lat: 44.0582, lon: -121.3153),
+    .init(name: "Medford", borough: "Jackson County", state: "OR", lat: 42.3265, lon: -122.8756),
+    .init(name: "Hillsboro", borough: "Washington County", state: "OR", lat: 45.5229, lon: -122.9898),
+    .init(name: "Gresham", borough: "Multnomah County", state: "OR", lat: 45.5001, lon: -122.4302),
+    .init(name: "Corvallis", borough: "Benton County", state: "OR", lat: 44.5646, lon: -123.2620),
     // The DMV spans DC, two Maryland counties, and nine Northern Virginia jurisdictions.
     .init(name: "Washington, DC", borough: "District of Columbia", state: "DMV", lat: 38.907, lon: -77.037),
     .init(name: "Bethesda", borough: "Montgomery County", state: "DMV", lat: 38.985, lon: -77.094),

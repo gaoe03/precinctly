@@ -20,8 +20,10 @@ struct AppState: Identifiable {
 let appStates: [AppState] = [
     .init(region: .dmvCore),
     .init(abbr: "CA", name: "California",     lat: 34.050, lon: -118.243),  // Downtown LA
+    .init(abbr: "CO", name: "Colorado",       lat: 39.739, lon: -104.990),  // Denver
     .init(abbr: "MA", name: "Massachusetts",  lat: 42.360, lon: -71.058),   // Boston
     .init(abbr: "NY", name: "New York",       lat: 40.758, lon: -73.985),   // Times Square
+    .init(abbr: "OR", name: "Oregon",         lat: 45.515, lon: -122.678),  // Portland
     .init(abbr: "TX", name: "Texas",          lat: 29.760, lon: -95.370),   // Houston
 ]
 func stateName(_ abbr: String) -> String {
@@ -239,7 +241,7 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
     func selectBySearch(lat: Double, lon: Double) -> Bool {
         cancelAutomaticRecenter()
         let coord = CLLocationCoordinate2D(latitude: lat, longitude: lon)
-        guard let hit = PrecinctDB.shared.lookup(lon: lon, lat: lat) else { return false }
+        guard let hit = PrecinctDB.shared.lookupForSearch(lon: lon, lat: lat) else { return false }
         let p = hit.profile
         selectedState = CoverageRegion.dmvCore.contains(p) ? CoverageRegion.dmvCore.id : p.state
         selectionSource = .tap
@@ -279,7 +281,7 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
         neighborPins = []
         // Aggregate regions are navigational map areas, not synthetic DB states.
         if abbr == CoverageRegion.dmvCore.id {
-            // Do not leave a previously selected NY/CA/MA/TX profile visible while the map is
+            // Do not leave a previously selected state profile visible while the map is
             // showing the aggregate DMV area.
             selection = nil
             selectionCoord = nil

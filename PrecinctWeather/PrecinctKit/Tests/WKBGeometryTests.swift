@@ -50,6 +50,57 @@ final class WKBGeometryTests: XCTestCase {
         }
     }
 
+    func testDistanceToGeometryBoundaryUsesMeters() throws {
+        let data = polygon([square])
+        XCTAssertEqual(try XCTUnwrap(WKBGeometry.distanceMeters(data, lon: 10, lat: 5)),
+                       0, accuracy: 0.001)
+        let outside = try XCTUnwrap(WKBGeometry.distanceMeters(data, lon: 10.001, lat: 5))
+        XCTAssertGreaterThan(outside, 100)
+        XCTAssertLessThan(outside, 112)
+        XCTAssertNil(WKBGeometry.distanceMeters(data, lon: .nan, lat: 5))
+    }
+
+    func testBoundaryDirectionsDistinguishInternalSeamsFromOuterEdges() throws {
+        let west = try XCTUnwrap(WKBGeometry.nearestBoundaryOffsetMeters(
+            polygon([square]), lon: 10.00001, lat: 5
+        ))
+        let eastSquare = square.map { Point($0.x + 10.00002, $0.y) }
+        let east = try XCTUnwrap(WKBGeometry.nearestBoundaryOffsetMeters(
+            polygon([eastSquare]), lon: 10.00001, lat: 5
+        ))
+
+        XCTAssertLessThan(west.east, 0)
+        XCTAssertGreaterThan(east.east, 0)
+        XCTAssertTrue(WKBGeometry.boundariesBracketPoint([west, east]))
+        XCTAssertFalse(WKBGeometry.boundariesBracketPoint([west, west]))
+    }
+
+    func testLocalGeometryCoverageDistinguishesASeamFromAnOuterCorner() {
+        let metersPerDegree = 111_320.0
+        let west = [
+            Point(-50, -50), Point(-1, -50), Point(-1, 50), Point(-50, 50), Point(-50, -50),
+        ].map { Point($0.x / metersPerDegree, $0.y / metersPerDegree) }
+        let east = [
+            Point(1, -50), Point(50, -50), Point(50, 50), Point(1, 50), Point(1, -50),
+        ].map { Point($0.x / metersPerDegree, $0.y / metersPerDegree) }
+        let seamGeometries = [polygon([west]), polygon([east])]
+
+        XCTAssertTrue(WKBGeometry.geometryLocallySurroundsPoint(
+            seamGeometries, lon: 0, lat: 0, radiusMeters: 10
+        ))
+
+        let northeast = [
+            Point(1, 1), Point(50, 1), Point(50, 50), Point(1, 50), Point(1, 1),
+        ].map { Point($0.x / metersPerDegree, $0.y / metersPerDegree) }
+        let southwest = [
+            Point(-50, -50), Point(-1, -50), Point(-1, -1), Point(-50, -1), Point(-50, -50),
+        ].map { Point($0.x / metersPerDegree, $0.y / metersPerDegree) }
+        XCTAssertFalse(WKBGeometry.geometryLocallySurroundsPoint(
+            [polygon([northeast]), polygon([southwest])],
+            lon: 0, lat: 0, radiusMeters: 10
+        ))
+    }
+
     func testEveryTruncatedPrefixFailsClosed() {
         let hole = [
             Point(4, 4), Point(6, 4), Point(6, 6), Point(4, 6), Point(4, 4),

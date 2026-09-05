@@ -49,7 +49,11 @@ struct ContentView: View {
             // so start() (which triggers the prompt) waits for the card to be dismissed.
             if hasOnboarded {
                 mapGesturesArmed = true
+                #if DEBUG
+                if !ProcessInfo.processInfo.arguments.contains("-disableLocation") { model.start() }
+                #else
                 model.start()
+                #endif
             }
         }
         .onChange(of: model.selectionRevision) {
@@ -64,13 +68,27 @@ struct ContentView: View {
         }
         .task {
             #if DEBUG   // export the full By-the-Numbers page to a tall PNG for the website asset
+            let arguments = ProcessInfo.processInfo.arguments
+            if let index = arguments.firstIndex(of: "-testUnitID"), arguments.indices.contains(index + 1) {
+                let unitID = arguments[index + 1]
+                let loaded = model.selectByUnitID(unitID, fallbackLat: 0, fallbackLon: 0)
+                print("UITEST \(loaded ? "PASS" : "FAIL"): selected exact unit \(unitID)")
+            }
             if ProcessInfo.processInfo.arguments.contains("-searchSelfTest") {
                 let cases = [
                     ("NY", "350 Fifth Avenue, New York, NY"),
                     ("CA", "1 Dr Carlton B Goodlett Place, San Francisco, CA"),
+                    ("CA", "Midway City, CA"),
+                    ("CO", "Denver, CO"),
+                    ("CO", "Colorado Springs, CO"),
+                    ("CO", "Fort Collins, CO"),
                     ("MA", "1 City Hall Square, Boston, MA"),
+                    ("OR", "Portland, OR"),
+                    ("OR", "Salem, OR"),
+                    ("OR", "Eugene, OR"),
                     ("TX", "600 Congress Avenue, Austin, TX"),
-                    (nil, "1600 Pennsylvania Avenue NW, Washington, DC")
+                    ("DC", "1600 Pennsylvania Avenue NW, Washington, DC"),
+                    (nil, "Liberty Bell, Philadelphia, PA")
                 ]
                 var failures = 0
                 for (expectedState, query) in cases {
@@ -86,7 +104,7 @@ struct ContentView: View {
                             coordinate = item?.placemark.coordinate
                         }
                         let state = coordinate.flatMap {
-                            PrecinctDB.shared.lookup(lon: $0.longitude, lat: $0.latitude)?.profile.state
+                            PrecinctDB.shared.lookupForSearch(lon: $0.longitude, lat: $0.latitude)?.profile.state
                         }
                         let passed = state == expectedState
                         print("SEARCHTEST \(passed ? "PASS" : "FAIL"): \(query) expected \(expectedState ?? "outside coverage"), got \(state ?? "outside coverage")")
@@ -151,6 +169,44 @@ struct ContentView: View {
                 let caFacts = db.funFacts(state: "CA")
                 check("CA facts (got \(caFacts.count))", caFacts.count > 10)
                 check("CA crossover absent", !caFacts.contains { $0.id == "crossover" })
+                let expansionStates: [(state: String, precincts: Int, counties: Int, normalUnit: String, year: Int, nullUnits: [String])] = [
+                    ("OR", 1_300, 36, "41001-:-0001", 2020,
+                     ["41005-:-X000", "41027-:-XXXX", "41045-:-0019"]),
+                    ("CO", 3_163, 64, "08001-:-4215601243", 2024,
+                     ["08005-:-6276103288", "08005-:-4276103350", "08005-:-6283603359", "08035-:-4303918103"]),
+                ]
+                for expansion in expansionStates {
+                    let overview = db.scopeOverview(state: expansion.state)
+                    check("\(expansion.state) precinct count \(expansion.precincts) (got \(overview.precinctCount))",
+                          overview.precinctCount == expansion.precincts)
+                    check("\(expansion.state) county count \(expansion.counties)",
+                          db.counties(state: expansion.state).count == expansion.counties)
+                    check("\(expansion.state) By the Numbers overview is populated",
+                          overview.totalPopulation != nil && !overview.leanBuckets.isEmpty)
+                    let facts = db.funFacts(state: expansion.state)
+                    check("\(expansion.state) facts cover all categories",
+                          Set(facts.map(\.category)) == Set(FactCategory.allCases))
+                    check("\(expansion.state) normal profile uses its own election year",
+                          db.precinct(unitID: expansion.normalUnit)?.profile.leanYear == expansion.year)
+                    let nullProfiles = expansion.nullUnits.compactMap { db.precinct(unitID: $0)?.profile }
+                    check("\(expansion.state) election-null profiles remain addressable",
+                          nullProfiles.count == expansion.nullUnits.count)
+                    check("\(expansion.state) election-null profiles keep demographics",
+                          nullProfiles.allSatisfy { $0.popTotal != nil && !$0.raceBreakdown.isEmpty })
+                    check("\(expansion.state) election-null profiles have no politics",
+                          nullProfiles.allSatisfy {
+                              $0.leanDemShare == nil && $0.leanYear == nil && $0.leanVotes == nil
+                                  && db.electionSeries(unitID: $0.unitID).isEmpty
+                          })
+                    let nullIDs = Set(expansion.nullUnits)
+                    let politicalFactsExcludeNulls = facts.filter { $0.category == .politics }.allSatisfy { fact in
+                        guard !nullIDs.contains(fact.unitID ?? "") else { return false }
+                        guard let specification = fact.leaderboard else { return true }
+                        return db.topPrecincts(specification).allSatisfy { !nullIDs.contains($0.id) }
+                    }
+                    check("\(expansion.state) political facts and rankings exclude null profiles",
+                          politicalFactsExcludeNulls)
+                }
                 print(fails == 0 ? "SELFTEST ALL PASS" : "SELFTEST \(fails) FAILURES")
                 return
             }

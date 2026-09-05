@@ -61,6 +61,10 @@ struct ShareCardPreview: View {
         "\(precinctHeadline(profile)), \(countyDisplay(profile.borough)) \(profile.state)"
     }
 
+    private var election: ShareCardElectionPresentation {
+        ShareCardElectionPresentation(profile: profile)
+    }
+
     private var header: some View {
         HStack {
             Button { dismiss() } label: {
@@ -87,7 +91,7 @@ struct ShareCardPreview: View {
                 Image(uiImage: card.image)
                     .resizable().scaledToFit()
                     .shadow(color: .black.opacity(0.5), radius: 18, y: 8)
-                    .accessibilityLabel("Share card for \(title)")
+                    .accessibilityLabel("Share card for \(title). \(election.accessibilitySummary)")
             } else {
                 RoundedRectangle(cornerRadius: 26, style: .continuous)
                     .fill(.white.opacity(0.06))
