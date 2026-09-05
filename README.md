@@ -14,7 +14,7 @@ Covers New York, California, Colorado, Massachusetts, Oregon, Texas, and the DMV
 
 - **Map explorer.** Tap any precinct for its profile: presidential lean, median income, race and ethnicity, and other census demographics.
 - **Widgets.** Home and lock-screen widgets read your current location and show the precinct around you.
-- **Trends.** Where the data supports it (California), a precinct carries a 2016 to 2024 presidential trajectory instead of a single snapshot.
+- **Trends.** Where the data supports it, a precinct carries earlier presidential results instead of a single snapshot. California spans 2016 to 2024. Most Oregon and Colorado precincts also include earlier results.
 
 ## How it's built
 
