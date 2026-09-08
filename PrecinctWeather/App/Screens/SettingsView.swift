@@ -82,7 +82,7 @@ struct SettingsView: View {
                 } header: {
                     Text("About")
                 } footer: {
-                    Text("Boundaries, election returns, and demographics are combined from government and third-party sources; full notices are under Sources and licenses. Your location is used only on your device and never leaves it.")
+                    Text("Boundaries, election returns, and demographics are combined from government and third-party sources. Full notices are under Sources and licenses. Your location is used only on your device and never leaves it.")
                 }
             }
             .navigationTitle("Settings")

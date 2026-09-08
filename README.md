@@ -35,6 +35,14 @@ PrecinctWeather/     SwiftUI app + WidgetKit extension
   App/               map, profile sheet, search, onboarding, settings
   PrecinctKit/       SQLite + profile framework (bundled DB)
   Widget/            home + lock-screen widget
-*.py                 data pipeline: public sources -> bundled DB
+pipeline/            data pipeline and source checks
+scripts/test.py      local regression runner
 site/                landing page
 ```
+
+## Testing
+
+See [TESTING.md](TESTING.md) for the regression command, setup and core user-flow checklist.
+Public CI runs the portable Python and repository checks. Full iOS tests require the local
+bundled database, Xcode and an iOS Simulator runtime. A public clone does not include the
+private input data or the shipping database, and cannot reproduce the full current bundle.

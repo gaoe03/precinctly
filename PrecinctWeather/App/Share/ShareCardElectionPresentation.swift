@@ -20,9 +20,9 @@ struct ShareCardElectionPresentation: Equatable {
     var accessibilitySummary: String {
         switch tint {
         case .neutral:
-            return "No election data. The card uses neutral election text and omits the vote bar."
+            return "No election data. Demographics are still available."
         case .partisan:
-            return "Political lean (headline). The card includes the vote bar."
+            return "Political lean \(headline)." + (detail.map { " \($0)." } ?? "")
         }
     }
 

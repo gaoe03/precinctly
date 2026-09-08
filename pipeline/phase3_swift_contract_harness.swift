@@ -60,7 +60,7 @@ private func runHarness(databasePath: String, samplesPath: String) throws -> [St
             try require(!rows.isEmpty && rows.count < 1_000,
                         "\(state) \(county) rows are empty or truncated in Swift")
             let pins = PrecinctDB.makePins(rows)
-            try require(pins.count == rows.count && pins.allSatisfy { !$0.rings.isEmpty },
+            try require(pins.count == rows.count && pins.allSatisfy { !$0.polygons.isEmpty },
                         "\(state) \(county) has a geometry Swift cannot decode")
             stateRows += rows.count
             decodedCandidateRows += rows.count
@@ -92,7 +92,7 @@ private func runHarness(databasePath: String, samplesPath: String) throws -> [St
             let regions = database.countyLeanRegions(state: state, county: county)
             try require(!regions.isEmpty, "\(state) \(county) lean regions are missing in Swift")
             let regionPins = PrecinctDB.makePins(regions)
-            try require(regionPins.count == regions.count && regionPins.allSatisfy { !$0.rings.isEmpty },
+            try require(regionPins.count == regions.count && regionPins.allSatisfy { !$0.polygons.isEmpty },
                         "\(state) \(county) has a lean region Swift cannot decode")
             decodedRegionRows += regionPins.count
         }
@@ -126,7 +126,7 @@ private func runHarness(databasePath: String, samplesPath: String) throws -> [St
         guard let hit = database.precinct(unitID: unitID) else {
             throw HarnessFailure(description: "required Swift profile is missing: \(unitID)")
         }
-        try require(hit.profile.state == state && !hit.rings.isEmpty,
+        try require(hit.profile.state == state && !hit.polygons.isEmpty,
                     "required Swift profile differs: \(unitID)")
         try require((hit.profile.leanYear == nil) == shouldBeNull,
                     "required Swift profile has wrong election availability: \(unitID)")
@@ -152,7 +152,7 @@ private func runHarness(databasePath: String, samplesPath: String) throws -> [St
             try require(sample.mode == "county", "unknown Swift sample mode")
             candidateSamples += 1
         }
-        try require(!hit.rings.isEmpty, "Swift representative lookup returned no rings")
+        try require(!hit.polygons.isEmpty, "Swift representative lookup returned no polygons")
     }
 
     let midwayLongitude = -117.9863579

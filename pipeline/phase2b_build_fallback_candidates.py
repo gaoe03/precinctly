@@ -46,6 +46,11 @@ except ModuleNotFoundError:
         select_latest_usable_president,
     )
 
+try:
+    from pipeline.data_contract import cap_cvap_to_vap, turnout_from_cvap
+except ModuleNotFoundError:
+    from data_contract import cap_cvap_to_vap, turnout_from_cvap  # type: ignore[no-redef]
+
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "precincts_2026_primary.db"
@@ -557,13 +562,11 @@ def build_state(source, source_sha, state, output_dir, replace):
         )
         source_cvap = demographics.get("cvap")
         vap_total = demographics.get("vap_total")
-        cvap = source_cvap
-        if cvap is not None and vap_total is not None and cvap > vap_total:
-            cvap = vap_total
+        cvap = cap_cvap_to_vap(source_cvap, vap_total)
+        if cvap != source_cvap:
             hygiene["cvap_clamped_to_vap"] += 1
-        turnout = lean_votes / cvap if lean_votes is not None and cvap and cvap >= 50 else None
-        if turnout is not None and turnout > 1.15:
-            turnout = None
+        turnout = turnout_from_cvap(lean_votes, cvap)
+        if lean_votes is not None and cvap and cvap >= 50 and lean_votes / cvap > 1.15:
             hygiene["turnout_over_1_15_to_null"] += 1
         elif lean_votes is not None and (cvap is None or cvap < 50):
             hygiene["turnout_missing_or_cvap_under_50_to_null"] += 1

@@ -7,6 +7,8 @@ import PrecinctKit
 // MARK: - Root: map + bottom sheet
 
 struct ContentView: View {
+    var onboardingReview = false
+    var hideProfilePanel = false
     @EnvironmentObject var model: LocationModel
     @State private var camera: MapCameraPosition = .region(.nyc)
     @State private var expanded = false        // bottom panel: peek ↔ full
@@ -15,10 +17,12 @@ struct ContentView: View {
     @State private var selectionFlightActive = false
     @State private var selectionFlightTarget: MKCoordinateRegion?
     @State private var suppressCountyTint = false
-    @AppStorage("hasOnboarded") private var hasOnboarded = false
+    @AppStorage("hasOnboarded") private var storedHasOnboarded = false
+    private var hasOnboarded: Bool { onboardingReview || storedHasOnboarded }
     @AppStorage("defaultState") private var defaultState = "NY"
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var visibleMapRegion: MKCoordinateRegion?
     // Map gestures stay dead during onboarding AND for a beat after dismissal: a double-tap
     // on "Start exploring" otherwise lands its second tap on the map, selects a random
     // precinct, and cancels the post-permission GPS recenter.
@@ -34,6 +38,7 @@ struct ContentView: View {
                 suppressCountyTint: suppressCountyTint,
                 selectionFlightActive: selectionFlightActive,
                 gesturesArmed: mapGesturesArmed,
+                visibleRegion: $visibleMapRegion,
                 onSelectionFlightEnded: finishSelectionFlight
             )
         }
@@ -50,7 +55,7 @@ struct ContentView: View {
             if hasOnboarded {
                 mapGesturesArmed = true
                 #if DEBUG
-                if !ProcessInfo.processInfo.arguments.contains("-disableLocation") { model.start() }
+                if !onboardingReview && !ProcessInfo.processInfo.arguments.contains("-disableLocation") { model.start() }
                 #else
                 model.start()
                 #endif
@@ -60,6 +65,16 @@ struct ContentView: View {
             if let r = model.selectionRegion {
                 beginSelectionFlight(to: r)
             }
+        }
+        .onChange(of: model.locationRevision) {
+            guard model.isFollowingLocation, !selectionFlightActive,
+                  let coordinate = model.myCoord, let region = visibleMapRegion else { return }
+            let target = MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: coordinate.latitude - region.span.latitudeDelta * 0.13,
+                                               longitude: coordinate.longitude),
+                span: region.span
+            )
+            withAnimation(reduceMotion ? nil : .linear(duration: 0.4)) { camera = .region(target) }
         }
         .onChange(of: model.selectedState) {
             if model.selection == nil {
@@ -241,14 +256,16 @@ struct ContentView: View {
         }
         .overlay(alignment: .bottom) {
             BottomPanel(expanded: $expanded).environmentObject(model)
-                .accessibilityHidden(!hasOnboarded)
+                .opacity(hideProfilePanel ? 0 : 1)
+                .allowsHitTesting(!hideProfilePanel)
+                .accessibilityHidden(!hasOnboarded || hideProfilePanel)
         }
         .overlay {
             // A plain overlay, not a cover: presenting from the first frame raced the
             // presentation machinery (and the permission dialog) and could never appear.
             if !hasOnboarded {
                 OnboardingCard {
-                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) { hasOnboarded = true }
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) { storedHasOnboarded = true }
                     model.start()
                     Task { @MainActor in
                         try? await Task.sleep(for: .milliseconds(600))
@@ -309,7 +326,8 @@ struct ContentView: View {
     }
 
     private var locateControl: some View {
-        controlChrome(controlIcon("location.fill", "Locate me") { model.recenterOnMe() })
+        controlChrome(controlIcon(model.isFollowingLocation ? "location.fill" : "location", "Locate me") { model.recenterOnMe() })
+            .accessibilityValue(model.isFollowingLocation ? "Following your location" : "Explore map")
     }
 
     @ViewBuilder
@@ -389,7 +407,7 @@ struct ContentView: View {
             await Task.yield()
             guard flightID == selectionFlightID else { return }
             selectionFlightActive = true
-            withAnimation(.easeInOut(duration: 0.25)) { camera = .region(region) }
+            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { camera = .region(region) }
             try? await Task.sleep(for: .milliseconds(600))
             guard flightID == selectionFlightID, suppressCountyTint else { return }
             selectionFlightActive = false
@@ -456,6 +474,7 @@ private struct PrecinctMap: View {
     var suppressCountyTint: Bool
     var selectionFlightActive: Bool
     var gesturesArmed: Bool   // false during onboarding + a beat after dismissal
+    @Binding var visibleRegion: MKCoordinateRegion?
     var onSelectionFlightEnded: (MKCoordinateRegion) -> Void
     @AppStorage("colorNeighbors") private var colorNeighbors = true
     @AppStorage("leanTintIntensity") private var leanTintIntensity = 0.5    // soft default, must match SettingsView
@@ -485,14 +504,14 @@ private struct PrecinctMap: View {
                     // No per-pin selection check: region ids never match a precinct unit_id, and
                     // referencing model.selection here made every tap re-diff all region polygons.
                     ForEach(model.neighborPins) { pin in
-                        ForEach(Array(pin.rings.enumerated()), id: \.offset) { _, ring in
-                            MapPolygon(coordinates: ring)
+                        ForEach(Array(pin.polygons.enumerated()), id: \.offset) { _, polygon in
+                            MapPolygon(polygon.mapPolygon)
                                 .foregroundStyle(Palette.lean(pin.demShare).opacity(0.52 * leanTintIntensity))   // fill only — cheaper than per-precinct strokes
                         }
                     }
                 }
-                ForEach(Array(model.selectedRings.enumerated()), id: \.offset) { _, ring in
-                    MapPolygon(coordinates: ring)
+                ForEach(Array(model.selectedPolygons.enumerated()), id: \.offset) { _, polygon in
+                    MapPolygon(polygon.mapPolygon)
                         .foregroundStyle(Palette.lean(model.selection?.leanDemShare).opacity(0.62 * leanTintIntensity))
                         .stroke(Palette.lean(model.selection?.leanDemShare), lineWidth: 2.5)
                 }
@@ -513,6 +532,11 @@ private struct PrecinctMap: View {
                             Circle().fill(Color.accentColor).frame(width: 12, height: 12)
                         }
                         .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
+                        .accessibilityIdentifier("Current location")
+                        .accessibilityLabel("You")
+                        #if DEBUG
+                        .accessibilityValue("\(c.latitude), \(c.longitude)")
+                        #endif
                     }
                 }
             }
@@ -546,6 +570,7 @@ private struct PrecinctMap: View {
                     .onChanged { _ in if gesturesArmed { model.cancelAutomaticRecenter() } }
             )
             .onMapCameraChange(frequency: .onEnd) { ctx in
+                visibleRegion = ctx.region
                 showNeighbors = ctx.region.span.latitudeDelta < 0.35   // county-level zoom or closer
                 if selectionFlightActive { onSelectionFlightEnded(ctx.region) }
             }

@@ -38,6 +38,11 @@ import argparse
 import sqlite3
 import sys
 
+try:
+    from pipeline.data_contract import REGION_FIPS, selected_president_aggregate
+except ModuleNotFoundError:  # Supports python3 pipeline/apply_area_baselines.py.
+    from data_contract import REGION_FIPS, selected_president_aggregate
+
 # The five boroughs are one city but five counties, so "vs New York City" cannot come from the
 # county rows. Keep this in step with the NYC borough set in PrecinctProfile.swift
 # (`countyDisplay`), which exists for the same five names.
@@ -62,8 +67,8 @@ def weighted(db, where, binds):
     ]
     sql = f"""
         SELECT COUNT(*), SUM(pop_total), {', '.join(parts)}
-        FROM precincts
-        WHERE {where} AND pop_total IS NOT NULL AND pop_total > 0
+        FROM precincts p
+        WHERE {where} AND p.pop_total IS NOT NULL AND p.pop_total > 0
     """
     row = db.execute(sql, binds).fetchone()
     out = {"precinct_count": row[0], "pop_total": int(row[1]) if row[1] else None}
@@ -72,15 +77,11 @@ def weighted(db, where, binds):
     if out["income_median"] is not None:
         out["income_median"] = int(round(out["income_median"]))
 
-    # Presidential two-party share, summed from the real vote counts rather than averaged from
-    # per-precinct shares, so a scope is not swayed by its tiny precincts.
-    votes = db.execute(f"""
-        SELECT SUM(e.dem), SUM(e.rep)
-        FROM precinct_elections e JOIN precincts p ON p.unit_id = e.unit_id
-        WHERE e.office = 'president' AND {where.replace('state', 'p.state').replace('borough', 'p.borough')}
-    """, binds).fetchone()
-    dem, rep = votes or (None, None)
-    out["pres24_dem_share"] = (dem / (dem + rep)) if dem and rep and (dem + rep) else None
+    # The app-facing name is historical. Each precinct contributes only the presidential
+    # election selected by its own lean_year, which allows mixed-year states without double count.
+    politics = selected_president_aggregate(db, where, binds)
+    out["pres24_dem_share"] = politics.dem_share
+    out["political_precinct_count"] = politics.precinct_count
     return out
 
 
@@ -88,11 +89,13 @@ def scope_rows(db):
     """Every scope the app can compare against: state, county, and metro."""
     rows = {}
     for (state,) in db.execute("SELECT DISTINCT state FROM precincts WHERE state IS NOT NULL ORDER BY state"):
-        rows[state] = weighted(db, "state = ?", [state])
+        rows[state] = weighted(db, "p.state = ?", [state])
         for (county,) in db.execute(
                 "SELECT DISTINCT borough FROM precincts WHERE state = ? AND borough IS NOT NULL "
                 "AND borough != '' ORDER BY borough", [state]):
-            rows[f"county|{state}|{county}"] = weighted(db, "state = ? AND borough = ?", [state, county])
+            rows[f"county|{state}|{county}"] = weighted(
+                db, "p.state = ? AND p.borough = ?", [state, county]
+            )
 
     for (state, name), boroughs in METROS.items():
         present = [b for b in boroughs if db.execute(
@@ -104,7 +107,11 @@ def scope_rows(db):
             print(f"  WARNING metro {name}: only {len(present)}/{len(boroughs)} counties present: {present}")
         placeholders = ",".join("?" * len(present))
         rows[f"metro|{state}|{name}"] = weighted(
-            db, f"state = ? AND borough IN ({placeholders})", [state] + present)
+            db, f"p.state = ? AND p.borough IN ({placeholders})", [state] + present)
+    for scope, fips in REGION_FIPS.items():
+        placeholders = ",".join("?" * len(fips))
+        if db.execute(f"SELECT 1 FROM precincts WHERE fips IN ({placeholders}) LIMIT 1", fips).fetchone():
+            rows[scope] = weighted(db, f"p.fips IN ({placeholders})", fips)
     return rows
 
 
@@ -193,6 +200,8 @@ def main():
         print(f"  {scope}: " + "; ".join(deltas))
 
     fields = ["scope", "precinct_count", "pop_total"] + WEIGHTED + ["pres24_dem_share"]
+    if "political_precinct_count" in cols:
+        fields.append("political_precinct_count")
     payload = [tuple([scope] + [rows[scope].get(f) for f in fields[1:]]) for scope in rows]
     db.execute("DELETE FROM baselines")
     db.executemany(

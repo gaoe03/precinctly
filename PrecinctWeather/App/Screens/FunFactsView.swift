@@ -10,6 +10,7 @@ import PrecinctKit
 
 struct FunFactsView: View {
     @EnvironmentObject var model: LocationModel
+    @Environment(\.dynamicTypeSize) private var dts
     @State private var facts: [FunFact] = []
     @State private var overview: ScopeOverview?
     @State private var counties: [String] = []
@@ -165,7 +166,9 @@ struct FunFactsView: View {
         let label = HStack(spacing: 10) {
             Image(systemName: "line.3.horizontal.decrease.circle.fill").foregroundStyle(.tint)
             Text(county.map { countyDisplay($0) } ?? "All of \(stateName(model.selectedState))")
-                .fontWeight(.semibold).foregroundStyle(.primary).lineLimit(1)
+                .fontWeight(.semibold).foregroundStyle(.primary)
+                .lineLimit(dts.isAccessibilitySize ? nil : 1)
+                .fixedSize(horizontal: false, vertical: true)
             Spacer()
             if !isAggregate {
                 Image(systemName: "chevron.up.chevron.down").font(.caption).foregroundStyle(.secondary)
@@ -340,6 +343,7 @@ func factTint(_ f: FunFact) -> Color {
 }
 
 private struct OverviewGrid: View {
+    @Environment(\.dynamicTypeSize) private var dts
     let overview: ScopeOverview
     private var leanText: String {
         guard let s = overview.avgDemShare else { return "No data" }
@@ -349,7 +353,7 @@ private struct OverviewGrid: View {
         return "Even"
     }
     var body: some View {
-        let cols = [GridItem(.flexible()), GridItem(.flexible())]
+        let cols = Array(repeating: GridItem(.flexible()), count: dts.isAccessibilitySize ? 1 : 2)
         LazyVGrid(columns: cols, spacing: 16) {
             BigStat(value: overview.precinctCount.formatted(), label: "Precincts", delta: nil)
             BigStat(value: overview.totalPopulation.map { Fmt.compact($0) } ?? "No data", label: "Population", delta: nil)
@@ -361,6 +365,7 @@ private struct OverviewGrid: View {
 }
 
 private struct LeanBar: View {
+    @Environment(\.dynamicTypeSize) private var dts
     let buckets: [LeanBucket]
     private func share(_ label: String) -> Double {
         switch label {
@@ -388,9 +393,11 @@ private struct LeanBar: View {
             .frame(height: 14).clipShape(Capsule())
             .accessibilityElement()
             .accessibilityLabel("Lean distribution: " + ordered.map { "\($0.count) \($0.label)" }.joined(separator: ", "))
-            HStack {
+            let labelsLayout = dts.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading))
+                : AnyLayout(HStackLayout())
+            labelsLayout {
                 Text("Democratic").font(.caption2).foregroundStyle(Palette.lean(0.85))
-                Spacer()
+                if !dts.isAccessibilitySize { Spacer() }
                 Text("Republican").font(.caption2).foregroundStyle(Palette.lean(0.15))
             }
         }
@@ -425,27 +432,35 @@ private struct SeeAllChip: View {
 /// One superlative as a List row (no card chrome — the inset section provides the background).
 /// The row taps to the winning precinct; the chip (if a crowd) drills into the full list.
 private struct FactRow: View {
+    @Environment(\.dynamicTypeSize) private var dts
     let fact: FunFact
     var onTap: () -> Void = {}
     var onSeeAll: (LeaderboardSpec) -> Void = { _ in }
 
     var body: some View {
-        accessibleRow(HStack(alignment: .center, spacing: 12) {
+        let layout = dts.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
+        accessibleRow(layout {
             Image(systemName: fact.icon).font(.body).foregroundStyle(factTint(fact))
                 .frame(width: 34, height: 34)
                 .background(Color(.tertiarySystemFill), in: Circle())
             VStack(alignment: .leading, spacing: 2) {
-                Text(fact.title).font(.headline.weight(.semibold)).lineLimit(1)
+                Text(fact.title).font(.headline.weight(.semibold))
+                    .lineLimit(dts.isAccessibilitySize ? nil : 1)
+                    .fixedSize(horizontal: false, vertical: true)
                 if let sub = fact.subtitle {
-                    Text(sub).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    Text(sub).font(.caption).foregroundStyle(.secondary)
+                        .lineLimit(dts.isAccessibilitySize ? nil : 2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Text(factPlace(fact.place)).font(.caption).foregroundStyle(.secondary)
-                    .lineLimit(1).minimumScaleFactor(0.85).allowsTightening(true)
+                    .lineLimit(dts.isAccessibilitySize ? nil : 1).minimumScaleFactor(0.85).allowsTightening(true)
+                    .fixedSize(horizontal: false, vertical: true)
                     .accessibilityLabel(fact.place)
             }
             .layoutPriority(1)
-            Spacer(minLength: 10)
-            VStack(alignment: .trailing, spacing: 4) {
+            if !dts.isAccessibilitySize { Spacer(minLength: 10) }
+            VStack(alignment: dts.isAccessibilitySize ? .leading : .trailing, spacing: 4) {
                 Text(fact.value).font(.headline.bold().monospacedDigit())
                     .lineLimit(1).fixedSize()
                 if let lb = fact.leaderboard {
@@ -477,6 +492,7 @@ private struct FactRow: View {
 
 /// A min↔max pair fused into one row: both endpoints with a track between, showing the span.
 private struct RangeRow: View {
+    @Environment(\.dynamicTypeSize) private var dts
     let low: FunFact
     let high: FunFact
     let pairKey: String
@@ -526,10 +542,16 @@ private struct RangeRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(label).font(.headline.weight(.semibold))
-            HStack(alignment: .center, spacing: 10) {
+                .fixedSize(horizontal: false, vertical: true)
+            let layout = dts.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 12))
+                : AnyLayout(HStackLayout(alignment: .center, spacing: 10))
+            layout {
                 endpoint(leftFact)
-                connector
-                .frame(width: 150)
+                if !dts.isAccessibilitySize {
+                    connector.frame(width: 150)
+                } else {
+                    Divider()
+                }
                 endpoint(rightFact)
             }
         }
@@ -544,8 +566,10 @@ private struct RangeRow: View {
             VStack(alignment: .center, spacing: 2) {
                 Text(f.value).font(.headline.bold().monospacedDigit()).foregroundStyle(valueColor(f))
                     .lineLimit(1).fixedSize()
+                    .accessibilityIdentifier("Range value \(f.id)")
                 Text(shortPlace(f.place)).font(.caption2).foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(dts.isAccessibilitySize ? nil : 1)
+                    .fixedSize(horizontal: false, vertical: true)
                     .minimumScaleFactor(0.82).allowsTightening(true)
                     .frame(maxWidth: .infinity, alignment: .center)
                 if incomeLeaderboard != nil {
@@ -569,6 +593,7 @@ private struct RangeRow: View {
 /// Renters and owners both saturate at 100%, so a range or a ranked list is meaningless. Show the
 /// two COUNTS (how many precincts are entirely one or the other), each drilling into a directory.
 private struct TenureRow: View {
+    @Environment(\.dynamicTypeSize) private var dts
     let renter: FunFact
     let owner: FunFact
     var onTap: (FunFact) -> Void = { _ in }
@@ -577,9 +602,12 @@ private struct TenureRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             Text("Home tenure").font(.headline.weight(.semibold))
-            HStack(spacing: 12) {
+            let layout = dts.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+                : AnyLayout(HStackLayout(spacing: 12))
+            layout {
                 stat(renter, noun: "renter")
-                Divider().frame(height: 36)
+                if dts.isAccessibilitySize { Divider() }
+                else { Divider().frame(height: 36) }
                 stat(owner, noun: "owner")
             }
         }
@@ -599,7 +627,9 @@ private struct TenureRow: View {
                     Image(systemName: "chevron.right").font(.caption2.weight(.bold)).foregroundStyle(.tertiary)
                 }
                 Text(saturated ? "all-\(noun) precincts" : "most \(noun)-occupied")
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    .font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(dts.isAccessibilitySize ? nil : 1)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -615,7 +645,7 @@ private struct AboutDataSheet: View {
         NavigationStack {
             List {
                 Section("Where this comes from") {
-                    aboutRow("Votes", "The most recent presidential election, counted by precinct.")
+                    aboutRow("Votes", "Each precinct's latest available presidential election. The year can differ by precinct.")
                     aboutRow("People and money", "The 2020 Census and the Census Bureau's American Community Survey, a rolling five-year estimate.")
                     NavigationLink("Sources and licenses") { SourcesView() }
                 }

@@ -36,6 +36,22 @@ final class WKBGeometryTests: XCTestCase {
         XCTAssertEqual(WKBGeometry.exteriorRings(data).count, 2)
     }
 
+    func testDrawablePolygonsKeepHoleWithItsExteriorAndDisjointIsland() {
+        let hole = [
+            Point(4, 4), Point(6, 4), Point(6, 6), Point(4, 6), Point(4, 4),
+        ]
+        let island = square.map { Point($0.x + 20, $0.y) }
+        let data = multiPolygon([polygon([square, hole]), polygon([island])])
+
+        let polygons = WKBGeometry.drawablePolygons(data)
+        XCTAssertEqual(polygons.count, 2)
+        XCTAssertEqual(polygons[0].exterior.count, square.count)
+        XCTAssertEqual(polygons[0].interiors.count, 1)
+        XCTAssertEqual(polygons[0].interiors[0].count, hole.count)
+        XCTAssertEqual(polygons[1].exterior.count, island.count)
+        XCTAssertTrue(polygons[1].interiors.isEmpty)
+    }
+
     func testExactBoundaryIsNotInterior() {
         let data = polygon([square])
         let boundaryPoints = [
@@ -111,6 +127,7 @@ final class WKBGeometryTests: XCTestCase {
             let truncated = Data(valid.prefix(end))
             XCTAssertFalse(WKBGeometry.contains(truncated, lon: 2, lat: 2), "Accepted prefix length \(end)")
             XCTAssertTrue(WKBGeometry.exteriorRings(truncated).isEmpty, "Drew prefix length \(end)")
+            XCTAssertTrue(WKBGeometry.drawablePolygons(truncated).isEmpty, "Drew prefix length \(end)")
         }
     }
 
@@ -153,6 +170,7 @@ final class WKBGeometryTests: XCTestCase {
         for data in malformed {
             XCTAssertFalse(WKBGeometry.contains(data, lon: 5, lat: 5))
             XCTAssertTrue(WKBGeometry.exteriorRings(data).isEmpty)
+            XCTAssertTrue(WKBGeometry.drawablePolygons(data).isEmpty)
         }
     }
 

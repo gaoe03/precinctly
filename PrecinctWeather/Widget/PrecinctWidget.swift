@@ -40,11 +40,17 @@ struct PrecinctEntry: TimelineEntry {
 /// resolves the current precinct straight from the bundled DB. No App Group required
 /// (that needs a paid account). Coordinates stay on device.
 struct PrecinctProvider: TimelineProvider {
+    private let locationProvider: () async -> CLLocation?
+
+    init(locationProvider: @escaping () async -> CLLocation? = PrecinctProvider.currentLocation) {
+        self.locationProvider = locationProvider
+    }
+
     func placeholder(in context: Context) -> PrecinctEntry { .sample }
     func getSnapshot(in context: Context, completion: @escaping (PrecinctEntry) -> Void) {
         let sample = PrecinctEntry.sample
         if context.isPreview { completion(sample); return }
-        resolve { e in completion(e.profile == nil ? sample : e) }
+        resolve(completion)
     }
     func getTimeline(in context: Context, completion: @escaping (Timeline<PrecinctEntry>) -> Void) {
         resolve { e in
@@ -66,17 +72,17 @@ struct PrecinctProvider: TimelineProvider {
     /// WidgetKit calls providers on background threads with no runloop, where delegate
     /// callbacks may never arrive (widget stuck on the placeholder forever). The timeout
     /// guarantees the timeline always completes. Coordinates stay on device.
-    private func currentLocation() async -> CLLocation? {
+    static func currentLocation() async -> CLLocation? {
         let manager = CLLocationManager()
         // Precise Location off fuzzes fixes by kilometers; precincts are a few blocks wide,
         // so better the cache/placeholder than confidently rendering a neighboring precinct.
         guard manager.accuracyAuthorization != .reducedAccuracy else { return nil }
-        if let cached = manager.location { return cached }   // last known fix
+        if let cached = WidgetLocationPolicy.usableLocation(manager.location) { return cached }
         return await withTaskGroup(of: CLLocation?.self) { group in
             group.addTask {
                 do {
                     for try await update in CLLocationUpdate.liveUpdates() {
-                        if let loc = update.location { return loc }
+                        if let loc = WidgetLocationPolicy.usableLocation(update.location) { return loc }
                     }
                 } catch {}
                 return nil
@@ -93,9 +99,9 @@ struct PrecinctProvider: TimelineProvider {
 
     /// Resolve the precinct (+ its shape) at the device's location from the bundled DB; fall back
     /// to the app's cached profile (App Group, if provisioned), else the "open app" placeholder.
-    private func resolve(_ completion: @escaping (PrecinctEntry) -> Void) {
+    func resolve(_ completion: @escaping (PrecinctEntry) -> Void) {
         Task {
-            let loc = await currentLocation()
+            let loc = WidgetLocationPolicy.usableLocation(await locationProvider())
             let profile: PrecinctProfile?
             var outOfCoverage = false
             if let loc {

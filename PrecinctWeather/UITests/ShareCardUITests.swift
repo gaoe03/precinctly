@@ -362,7 +362,7 @@ final class ShareCardUITests: XCTestCase {
 
         app.buttons["Share this precinct"].tap()
         let card = app.images.matching(NSPredicate(
-            format: "label CONTAINS 'No election data. The card uses neutral election text and omits the vote bar.'"
+            format: "label CONTAINS 'No election data. Demographics are still available.'"
         ))
             .firstMatch
         XCTAssertTrue(card.waitForExistence(timeout: 25), "null profile share preview did not render")

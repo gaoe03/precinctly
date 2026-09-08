@@ -8,7 +8,7 @@ private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.sel
 public struct PrecinctPin: Identifiable, Sendable {
     public let id: String          // unit_id
     public let demShare: Double?   // 2024 president two-party Dem share -> color
-    public let rings: [[CLLocationCoordinate2D]]
+    public let polygons: [PrecinctPolygon]
 }
 
 /// Read-only access to the bundled nyc_precincts.sqlite. Resolves a coordinate to
@@ -91,15 +91,14 @@ public final class PrecinctDB {
 
     // MARK: Coordinate -> precinct
 
-    /// Returns the matched precinct AND its already-decoded exterior rings. The WKB is decoded
-    /// once here (it's read for the point-in-polygon test anyway), so callers reuse it for drawing
-    /// and the camera bounding box instead of re-querying + re-decoding the same row.
+    /// Returns the matched precinct and its already-decoded polygons. The WKB is decoded once here
+    /// so callers reuse it for drawing and the camera bounding box without another query.
     public func lookup(lon: Double, lat: Double)
-        -> (profile: PrecinctProfile, rings: [[CLLocationCoordinate2D]])? {
+        -> (profile: PrecinctProfile, polygons: [PrecinctPolygon])? {
         for id in candidateIDs(lon: lon, lat: lat) {
             if let (profile, wkb) = row(id: id),
                WKBGeometry.contains(wkb, lon: lon, lat: lat) {
-                return (profile, WKBGeometry.exteriorRings(wkb))
+                return (profile, WKBGeometry.drawablePolygons(wkb))
             }
         }
         return nil
@@ -112,7 +111,7 @@ public final class PrecinctDB {
     /// occupies most directions around it. The local enclosure check rejects outer corners where
     /// two boundary points alone can appear to bracket a point outside coverage.
     public func lookupForSearch(lon: Double, lat: Double, maxSnapMeters: Double = 10)
-        -> (profile: PrecinctProfile, rings: [[CLLocationCoordinate2D]])? {
+        -> (profile: PrecinctProfile, polygons: [PrecinctPolygon])? {
         if let exact = lookup(lon: lon, lat: lat) { return exact }
         guard lon.isFinite, lat.isFinite, (-90...90).contains(lat),
               maxSnapMeters.isFinite, maxSnapMeters > 0 else { return nil }
@@ -131,13 +130,13 @@ public final class PrecinctDB {
                 matches.map(\.wkb), lon: lon, lat: lat, radiusMeters: snapMeters
               ),
               let best = matches.min(by: { $0.offset.distance < $1.offset.distance }) else { return nil }
-        return (best.profile, WKBGeometry.exteriorRings(best.wkb))
+        return (best.profile, WKBGeometry.drawablePolygons(best.wkb))
     }
 
     /// Exact selection for rows already identified by a leaderboard or other DB query.
     /// This avoids re-resolving a bounding-box midpoint that may sit outside a concave precinct.
     public func precinct(unitID: String)
-        -> (profile: PrecinctProfile, rings: [[CLLocationCoordinate2D]])? {
+        -> (profile: PrecinctProfile, polygons: [PrecinctPolygon])? {
         let sql = "SELECT rowid FROM precincts WHERE unit_id = ?"
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
@@ -145,7 +144,7 @@ public final class PrecinctDB {
         sqlite3_bind_text(stmt, 1, unitID, -1, SQLITE_TRANSIENT)
         guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
         guard let (profile, wkb) = row(id: sqlite3_column_int(stmt, 0)) else { return nil }
-        return (profile, WKBGeometry.exteriorRings(wkb))
+        return (profile, WKBGeometry.drawablePolygons(wkb))
     }
 
     /// Cheap "am I near coverage" test: true if any precinct's bounding box comes within
@@ -260,7 +259,10 @@ public final class PrecinctDB {
     /// Decode raw county rows (from `countyRows`) into drawable pins. Pure CPU (no DB handle),
     /// so it is safe to call off the main thread — keeps the county-tint decode off the UI thread.
     public static func makePins(_ rows: [(id: String, demShare: Double?, wkb: Data)]) -> [PrecinctPin] {
-        rows.map { PrecinctPin(id: $0.id, demShare: $0.demShare, rings: WKBGeometry.exteriorRings($0.wkb)) }
+        rows.map {
+            PrecinctPin(id: $0.id, demShare: $0.demShare,
+                        polygons: WKBGeometry.drawablePolygons($0.wkb))
+        }
     }
 
     /// A county dissolved into ≈5 lean REGIONS (one per Solid Rep…Solid Dem bucket) for the

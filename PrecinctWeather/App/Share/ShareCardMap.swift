@@ -1,4 +1,5 @@
 import UIKit
+import SwiftUI
 import MapKit
 import CoreLocation
 import PrecinctKit
@@ -17,10 +18,11 @@ import PrecinctKit
 enum ShareCardMap {
 
     static func image(profile: PrecinctProfile,
-                      rings: [[CLLocationCoordinate2D]],
+                      polygons: [PrecinctPolygon],
                       size: CGSize,
-                      scale: CGFloat) async -> UIImage? {
-        guard let box = boundingBox(of: rings) else { return nil }
+                      scale: CGFloat,
+                      colorScheme: ColorScheme) async -> UIImage? {
+        guard let box = boundingBox(of: polygons.map(\.exterior)) else { return nil }
         let region = paddedRegion(for: box, aspect: size.width / size.height)
         let neighbors = await neighborShapes(profile: profile, center: box.center)
 
@@ -28,18 +30,22 @@ enum ShareCardMap {
         options.region = region
         options.size = size
         options.scale = scale
+        options.traitCollection = UITraitCollection(
+            userInterfaceStyle: colorScheme == .dark ? .dark : .light
+        )
         // Points of interest stay on: a Whole Foods or a park is exactly what makes a recipient
         // recognise the block. Traffic and buildings off, they only add noise at this size.
         options.showsBuildings = false
 
         let snapshot = try? await MKMapSnapshotter(options: options).start()
+        guard !Task.isCancelled else { return nil }
 
         return UIGraphicsImageRenderer(size: size, format: format(scale: scale)).image { ctx in
             let cg = ctx.cgContext
             if let snapshot {
                 snapshot.image.draw(at: .zero)
             } else {
-                UIColor(red: 0.90, green: 0.90, blue: 0.88, alpha: 1).setFill()
+                fallbackColor(for: colorScheme).setFill()
                 cg.fill(CGRect(origin: .zero, size: size))
             }
             // One projection for both paths so the fallback lines up with the snapshot version.
@@ -51,21 +57,23 @@ enum ShareCardMap {
             // live map the tint is the subject; here it is context under a highlighted precinct,
             // and at the app's weight it turned every street name and park to mush.
             for shape in neighbors where shape.id != profile.unitID {
-                guard let path = path(for: shape.rings, project: project) else { continue }
-                UIColor(Palette.lean(shape.demShare)).withAlphaComponent(0.22).setFill()
-                cg.addPath(path); cg.fillPath()
+                PrecinctPolygonRenderer.fill(
+                    shape.polygons, in: cg,
+                    color: UIColor(Palette.lean(shape.demShare)).withAlphaComponent(0.22),
+                    project: project
+                )
             }
 
             // The precinct itself: stronger fill, and an outline heavy enough to find at a glance.
-            guard let mine = path(for: rings, project: project) else { return }
+            guard !polygons.isEmpty else { return }
             let lean = UIColor(Palette.lean(profile.leanDemShare))
-            lean.withAlphaComponent(0.55).setFill()
-            cg.addPath(mine); cg.fillPath()
+            PrecinctPolygonRenderer.fill(polygons, in: cg,
+                                          color: lean.withAlphaComponent(0.55), project: project)
             cg.setLineJoin(.round)
             UIColor.white.withAlphaComponent(0.9).setStroke()
-            cg.addPath(mine); cg.setLineWidth(4.5); cg.strokePath()
+            stroke(polygons, in: cg, width: 4.5, project: project)
             lean.setStroke()
-            cg.addPath(mine); cg.setLineWidth(2.5); cg.strokePath()
+            stroke(polygons, in: cg, width: 2.5, project: project)
         }
     }
 
@@ -74,6 +82,12 @@ enum ShareCardMap {
         f.scale = scale
         f.opaque = true
         return f
+    }
+
+    private static func fallbackColor(for colorScheme: ColorScheme) -> UIColor {
+        colorScheme == .dark
+            ? UIColor(red: 0.105, green: 0.112, blue: 0.133, alpha: 1)
+            : UIColor(red: 0.90, green: 0.90, blue: 0.88, alpha: 1)
     }
 
     /// Nearest precincts in the same county, for context around the subject. Capped well below
@@ -88,17 +102,15 @@ enum ShareCardMap {
         return PrecinctDB.makePins(rows)
     }
 
-    private static func path(for rings: [[CLLocationCoordinate2D]],
-                             project: (CLLocationCoordinate2D) -> CGPoint) -> CGPath? {
-        let path = CGMutablePath()
-        var drew = false
-        for ring in rings where ring.count > 2 {
-            path.move(to: project(ring[0]))
-            for c in ring.dropFirst() { path.addLine(to: project(c)) }
-            path.closeSubpath()
-            drew = true
+    private static func stroke(_ polygons: [PrecinctPolygon], in context: CGContext,
+                               width: CGFloat,
+                               project: (CLLocationCoordinate2D) -> CGPoint) {
+        for polygon in polygons {
+            guard let path = PrecinctPolygonRenderer.path(for: polygon, project: project) else { continue }
+            context.addPath(path)
+            context.setLineWidth(width)
+            context.strokePath()
         }
-        return drew ? path : nil
     }
 
     // MARK: Region math

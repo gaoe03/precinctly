@@ -3,6 +3,7 @@ import CoreLocation
 import MapKit
 import WidgetKit
 import UIKit
+import SwiftUI
 import PrecinctKit
 
 /// A loaded coverage region the user can switch between (each is its own view).
@@ -52,13 +53,15 @@ func selectedRegionContains(_ regionID: String, profile: PrecinctProfile) -> Boo
 /// never changes what the home-screen widget shows.
 final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var myCoord: CLLocationCoordinate2D?
+    @Published private(set) var locationRevision = 0
+    @Published private(set) var isFollowingLocation = false
     @Published var status: CLAuthorizationStatus = .notDetermined
 
     @Published var selection: PrecinctProfile?
     @Published var selectionCoord: CLLocationCoordinate2D?
     @Published var selectionRegion: MKCoordinateRegion?
     @Published private(set) var selectionRevision = 0
-    @Published var selectedRings: [[CLLocationCoordinate2D]] = []
+    @Published var selectedPolygons: [PrecinctPolygon] = []
     @Published var neighborPins: [PrecinctPin] = []
     @Published var presidentTrend: [ElectionResult] = []   // president Dem two-party share over time
     /// The baseline the "vs X" deltas are measured against. Named for history; it is whichever
@@ -108,6 +111,7 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
     private var explicitRecenterAfterAuthorization = false
     private var recenterGeneration = 0
     private var pendingRecenterGeneration: Int?
+    private var lastGPSUnitID: String?
     private var recenterRetryCount = 0
 
     // Once-per-launch toasts; repeated location updates must not re-nag.
@@ -129,7 +133,8 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
             selectedState = saved
         }
         manager.delegate = self
-        manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        manager.desiredAccuracy = kCLLocationAccuracyBest
+        manager.distanceFilter = 5
         haptics.prepare()
     }
 
@@ -150,12 +155,16 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
         switch manager.authorizationStatus {
         case .authorizedWhenInUse, .authorizedAlways:
             locationDenied = false
+            locationServiceStarted = true
+            manager.startUpdatingLocation()
             selectionSource = .gps              // let GPS override a prior .tap selection
             armAutomaticRecenter()
             if manager.accuracyAuthorization == .reducedAccuracy {
                 requestPreciseLocation()
-            } else {
-                manager.requestLocation()        // never reuse a stale or formerly approximate fix
+            } else if let location = manager.location,
+                      location.horizontalAccuracy >= 0, location.horizontalAccuracy <= 100,
+                      abs(location.timestamp.timeIntervalSinceNow) <= 10 {
+                selectByGPS(location.coordinate)
             }
         case .notDetermined:
             explicitRecenterAfterAuthorization = true
@@ -171,10 +180,22 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
         guard locationServiceStarted, !didRequestInitialLocation else { return }
         didRequestInitialLocation = true
         if !hasManualNavigation { armAutomaticRecenter() }
-        manager.requestLocation()
+        manager.startUpdatingLocation()
+    }
+
+    func suspendLocationUpdates() {
+        manager.stopUpdatingLocation()
+    }
+
+    func resumeLocationUpdates() {
+        guard locationServiceStarted,
+              manager.authorizationStatus == .authorizedWhenInUse
+                || manager.authorizationStatus == .authorizedAlways else { return }
+        manager.startUpdatingLocation()
     }
 
     private func armAutomaticRecenter() {
+        isFollowingLocation = true
         recenterGeneration += 1
         pendingRecenterGeneration = recenterGeneration
         recenterRetryCount = 0
@@ -184,6 +205,7 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
 
     /// Any explicit exploration wins over a slow startup GPS callback.
     func cancelAutomaticRecenter() {
+        isFollowingLocation = false
         hasManualNavigation = true
         recenterGeneration += 1
         pendingRecenterGeneration = nil
@@ -203,7 +225,7 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
             return
         }
         recenterRetryCount += 1
-        manager.requestLocation()
+        manager.startUpdatingLocation()
     }
 
     /// The app is fully usable by tapping, so nag about denied location once per denial,
@@ -232,7 +254,7 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
         }
         selectionSource = .tap
         tap()
-        loadDetails(p, rings: hit.rings, at: coord)
+        loadDetails(p, polygons: hit.polygons, at: coord)
     }
 
     /// Address/place search is exploratory, like a map tap, but it can cross state lines.
@@ -246,7 +268,7 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
         selectedState = CoverageRegion.dmvCore.contains(p) ? CoverageRegion.dmvCore.id : p.state
         selectionSource = .tap
         tap()
-        loadDetails(p, rings: hit.rings, at: coord)
+        loadDetails(p, polygons: hit.polygons, at: coord)
         return true
     }
 
@@ -260,7 +282,7 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
         selectedState = CoverageRegion.dmvCore.contains(p) ? CoverageRegion.dmvCore.id : p.state
         selectionSource = .tap
         tap()
-        loadDetails(p, rings: hit.rings,
+        loadDetails(p, polygons: hit.polygons,
                     at: CLLocationCoordinate2D(latitude: fallbackLat, longitude: fallbackLon))
         return true
     }
@@ -286,7 +308,7 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
             selection = nil
             selectionCoord = nil
             selectionRegion = nil
-            selectedRings = []
+            selectedPolygons = []
             neighborPins = []
             comparisonAreas = []
             stateBaseline = nil
@@ -295,14 +317,17 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
         } else if let hit = destinationHit {
             // Resolve and load the destination before publishing the new state. SwiftUI then
             // receives one coherent snapshot instead of briefly showing a new pill over old data.
-            loadDetails(hit.profile, rings: hit.rings,
+            loadDetails(hit.profile, polygons: hit.polygons,
                         at: CLLocationCoordinate2D(latitude: st.lat, longitude: st.lon))
             selectedState = abbr
         }
     }
 
     private func selectByGPS(_ coord: CLLocationCoordinate2D) {
-        myCoord = coord                            // the "you" pin always tracks GPS
+        withAnimation(UIAccessibility.isReduceMotionEnabled ? nil : .linear(duration: 0.4)) {
+            myCoord = coord                        // the "you" pin always tracks GPS
+        }
+        defer { locationRevision &+= 1 }
         guard let hit = PrecinctDB.shared.lookup(lon: coord.longitude, lat: coord.latitude) else {
             // Worded so it's also true for covered-state users standing on water.
             if !warnedOutOfCoverage {
@@ -313,11 +338,14 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
             return
         }
         let p = hit.profile
-        ProfileStore.save(p)                       // widget always reflects where you ARE
-        WidgetCenter.shared.reloadTimelines(ofKind: "PrecinctWidget")
-        WidgetCenter.shared.reloadTimelines(ofKind: "PrecinctLockWidget")
-        guard let generation = pendingRecenterGeneration,
-              generation == recenterGeneration else { return }
+        if lastGPSUnitID != p.unitID {
+            lastGPSUnitID = p.unitID
+            ProfileStore.save(p)                   // widget always reflects where you ARE
+            WidgetCenter.shared.reloadTimelines(ofKind: "PrecinctWidget")
+            WidgetCenter.shared.reloadTimelines(ofKind: "PrecinctLockWidget")
+        }
+        let explicitRecenter = pendingRecenterGeneration == recenterGeneration
+        guard explicitRecenter || isFollowingLocation else { return }
         pendingRecenterGeneration = nil
         recenterRetryCount = 0
         selectionSource = .gps
@@ -326,20 +354,22 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
         } else if appStates.contains(where: { $0.abbr == p.state }) {
             selectedState = p.state
         }
-        loadDetails(p, rings: hit.rings, at: coord)
+        if explicitRecenter || selection?.unitID != p.unitID {
+            loadDetails(p, polygons: hit.polygons, at: coord, moveCamera: explicitRecenter)
+        }
     }
 
-    private func loadDetails(_ p: PrecinctProfile, rings: [[CLLocationCoordinate2D]],
-                             at coord: CLLocationCoordinate2D) {
+    private func loadDetails(_ p: PrecinctProfile, polygons: [PrecinctPolygon],
+                             at coord: CLLocationCoordinate2D, moveCamera: Bool = true) {
         selection = p
         selectionCoord = coord
-        selectedRings = rings
+        selectedPolygons = polygons
         presidentTrend = PrecinctDB.shared.electionSeries(unitID: p.unitID)
             .filter { $0.office == "president" && $0.demShare != nil }
             .sorted { $0.year < $1.year }
         comparisonAreas = PrecinctDB.shared.comparisonAreas(for: p)
         stateBaseline = resolvedBaseline(for: p)
-        if let bb = Self.boundingBox(of: rings) {
+        if let bb = Self.boundingBox(of: polygons.map(\.exterior)) {
             let padLon = (bb.maxLon - bb.minLon) * 0.9 + 0.004
             let padLat = (bb.maxLat - bb.minLat) * 0.9 + 0.004
             let spanLat = (bb.maxLat - bb.minLat) + padLat
@@ -354,7 +384,7 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
         }
         // A successful explicit Locate/search/tap must move the camera even when it resolves to
         // the precinct that was already selected. The unit ID alone does not change in that case.
-        selectionRevision &+= 1
+        if moveCamera { selectionRevision &+= 1 }
         // Tint the whole surrounding county. Cached by county so panning/zooming within it
         // never reloads — only selecting a precinct in a *different* county refetches.
         let countyKey = "\(p.state)|\(p.borough)"   // county names repeat across states (Suffolk NY vs MA)
@@ -419,15 +449,19 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
                 explicitRecenterAfterAuthorization = false
                 didRequestInitialLocation = true
                 armAutomaticRecenter()
+                locationServiceStarted = true
+                m.startUpdatingLocation()
                 if m.accuracyAuthorization == .reducedAccuracy {
                     requestPreciseLocation()
                 } else {
-                    m.requestLocation()
+                    m.startUpdatingLocation()
                 }
             } else {
                 beginUpdates()
             }
         case .denied, .restricted:
+            manager.stopUpdatingLocation()
+            isFollowingLocation = false
             explicitRecenterAfterAuthorization = false
             exhaustAutomaticRecenter()
             didRequestInitialLocation = false
@@ -446,12 +480,14 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
         // accuracy; if it stays reduced, keep the "you" pin but don't pretend to know the precinct.
         if m.accuracyAuthorization == .reducedAccuracy {
             myCoord = loc.coordinate
+            locationRevision &+= 1
             if pendingRecenterGeneration != nil { requestPreciseLocation() }
             return
         }
         let age = abs(loc.timestamp.timeIntervalSinceNow)
         guard loc.horizontalAccuracy >= 0, loc.horizontalAccuracy <= 100, age <= 60 else {
             myCoord = loc.coordinate
+            locationRevision &+= 1
             if !warnedInaccurate {
                 warnedInaccurate = true
                 toast = "Your location isn't precise enough to choose a precinct yet. Try again near a window, search an address, or tap the map."
@@ -473,7 +509,7 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
                         self.warnApproximate()
                         self.exhaustAutomaticRecenter()
                     }
-                    else { self.manager.requestLocation() }
+                    else { self.manager.startUpdatingLocation() }
                 }
             }
         } else {
@@ -496,7 +532,7 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
         case .locationUnknown where pendingRecenterGeneration != nil
             && locationUnknownRetryCount < 1:
             locationUnknownRetryCount += 1
-            m.requestLocation()
+            m.startUpdatingLocation()
         case .locationUnknown:
             exhaustAutomaticRecenter()
             warnLocationFailure()

@@ -66,6 +66,7 @@ final class PrecinctProfileTests: XCTestCase {
         XCTAssertNil(missing.voteShare)
         XCTAssertEqual(missing.tint, .neutral)
         XCTAssertFalse(missing.showsVoteBar)
+        XCTAssertEqual(missing.accessibilitySummary, "No election data. Demographics are still available.")
 
         let available = ShareCardElectionPresentation(profile: .sample)
         XCTAssertEqual(available.headline, "D+36")
@@ -74,6 +75,7 @@ final class PrecinctProfileTests: XCTestCase {
         XCTAssertEqual(available.voteShare, 0.681)
         XCTAssertEqual(available.tint, .partisan(0.681))
         XCTAssertTrue(available.showsVoteBar)
+        XCTAssertEqual(available.accessibilitySummary, "Political lean D+36. Solid Dem in 2024.")
     }
 
     func testCoverageCopyIncludesOregonAndColorado() {

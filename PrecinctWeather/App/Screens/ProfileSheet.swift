@@ -26,7 +26,8 @@ struct BottomPanel: View {
     @State private var dragHeight: CGFloat? = nil
     @AppStorage("hapticsEnabled") private var hapticsEnabled = true
     @Environment(\.dynamicTypeSize) private var dts
-    private var spring: Animation { .spring(response: 0.34, dampingFraction: 0.86) }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var spring: Animation? { reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.86) }
     // One prepared generator (matching LocationModel's), not a fresh unprepared one per snap.
     private static let snapHaptic: UIImpactFeedbackGenerator = {
         let g = UIImpactFeedbackGenerator(style: .light); g.prepare(); return g
@@ -179,7 +180,7 @@ private struct ProfileContent: View {
                         WhoLivesHere(profile: p)
                         MoneyEducation(profile: p, baseline: baseline)
                         MoreStats(profile: p)
-                        Text(p.leanYear.map { "\($0) presidential vote. Demographics use the 2020 Census and ACS." }
+                        Text(p.leanYear.map { "\(String($0)) presidential vote. Demographics use the 2020 Census and ACS." }
                              ?? "Election data is unavailable for this precinct. Demographics use the 2020 Census and ACS.")
                             .font(.caption2).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .center)
@@ -302,6 +303,7 @@ private struct SheetBigStat: View {
             if let delta {
                 Text(delta.0).font(.caption2.bold())
                     .foregroundStyle(delta.1 ? .green : .orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -377,7 +379,7 @@ private struct LeanHero: View {
                     // This overlay belongs to the ScrollView, so it follows the hero instead of
                     // floating above it. It deliberately does not make the collapsed row taller.
                     if showsShareButton {
-                        ShareCardButton(profile: profile, rings: model.selectedRings,
+                        ShareCardButton(profile: profile, polygons: model.selectedPolygons,
                                         trend: model.presidentTrend, baseline: model.stateBaseline)
                     }
                 }
@@ -389,6 +391,8 @@ private struct LeanHero: View {
                 if let labelText {
                     Text(labelText + (profile.leanYear.map { " in \($0)" } ?? ""))
                         .font(.subheadline.weight(.semibold)).foregroundStyle(color)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 if let s = profile.leanDemShare {
                     TwoPartyBar(demShare: s).accessibilityHidden(true).padding(.top, 2)
@@ -517,6 +521,7 @@ private struct WhoLivesHere: View {
             } else {
                 if let p = profile.pluralityGroup {
                     Text("Largest group: **\(p)**").font(.subheadline)
+                        .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 VStack(spacing: 7) {
@@ -575,6 +580,7 @@ private struct WhoLivesHere: View {
 
 private struct MoneyEducation: View {
     @EnvironmentObject var model: LocationModel
+    @Environment(\.dynamicTypeSize) private var dts
     let profile: PrecinctProfile
     let baseline: Baseline?
     var body: some View {
@@ -582,7 +588,9 @@ private struct MoneyEducation: View {
         // who picked "county" and landed in a 4-precinct Texas county sees "vs TX" and the
         // number describes itself correctly instead of lying about what it measured.
         SheetSection(title: "Money and education") {
-            HStack(alignment: .top, spacing: 12) {
+            let layout = dts.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+                : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
+            layout {
                 // ACS income is top-coded at the 250001 sentinel. By-the-Numbers and the share
                 // card already showed that honestly as "$250k+"; this screen was still printing
                 // the raw sentinel as "$250,001".
@@ -608,10 +616,11 @@ private struct MoneyEducation: View {
 // one that didn't fit, and it now sits with turnout up in the hero where it belongs.
 
 private struct MoreStats: View {
+    @Environment(\.dynamicTypeSize) private var dts
     let profile: PrecinctProfile
     var body: some View {
         SheetSection(title: "People and housing") {
-            let cols = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
+            let cols = Array(repeating: GridItem(.flexible()), count: dts.isAccessibilitySize ? 1 : 3)
             LazyVGrid(columns: cols, spacing: 16) {
                 SheetSmallStat("Population", profile.popTotal.map { Fmt.compact($0) })
                 SheetSmallStat("Median age", profile.avgAge.map { String(Int($0.rounded())) })

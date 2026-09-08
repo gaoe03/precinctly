@@ -262,8 +262,22 @@ enum WKBGeometry {
 
     /// Exterior rings as coordinate arrays, for drawing on a Map.
     static func exteriorRings(_ data: Data) -> [[CLLocationCoordinate2D]] {
-        polygons(data).compactMap { poly in
-            poly.first?.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+        drawablePolygons(data).map(\.exterior)
+    }
+
+    /// Drawable polygons with each polygon's holes attached to its exterior ring.
+    static func drawablePolygons(_ data: Data) -> [PrecinctPolygon] {
+        polygons(data).compactMap { polygon in
+            guard let exterior = polygon.first else { return nil }
+            return PrecinctPolygon(
+                exterior: coordinates(exterior),
+                interiors: polygon.dropFirst().map(coordinates)
+            )
         }
+    }
+
+    private static func coordinates(_ ring: [(lon: Double, lat: Double)])
+        -> [CLLocationCoordinate2D] {
+        ring.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
     }
 }

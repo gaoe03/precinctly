@@ -24,6 +24,10 @@ from pyproj import Transformer
 
 from build_region_precincts import adapter_josh, build
 from add_lean_regions import clean_union
+try:
+    from pipeline.data_contract import selected_president_aggregate
+except ModuleNotFoundError:  # Supports python3 pipeline/merge_dmv_private.py.
+    from data_contract import selected_president_aggregate
 
 CURATED_FIPS = {
     "11001": "DC",
@@ -106,12 +110,12 @@ def _normalize_dc_records(records, controls):
 
 
 def _upsert_dmv_baseline(con):
-    """Persist a population-weighted DMV-core comparison row in the target DB."""
+    """Persist DMV demographics by population and politics by selected-year votes."""
     fips = tuple(CURATED_FIPS)
     rows = con.execute(
         "SELECT pop_total, pct_white, pct_black, pct_hispanic, pct_asian, pct_native, "
-        "pct_pacific, pct_other, pct_ba_or_higher, income_median, pct_renter, avg_age, "
-        "lean_dem_share, lean_votes FROM precincts WHERE fips IN (%s)" % ",".join("?" * len(fips)),
+        "pct_pacific, pct_other, pct_ba_or_higher, income_median, pct_renter, avg_age "
+        "FROM precincts WHERE fips IN (%s)" % ",".join("?" * len(fips)),
         fips,
     ).fetchall()
     if not rows:
@@ -133,8 +137,12 @@ def _upsert_dmv_baseline(con):
         "pct_other": weighted(7), "pct_ba_or_higher": weighted(8),
         "income_median": int(round(weighted(9))) if weighted(9) is not None else None,
         "pct_renter": weighted(10), "avg_age": weighted(11),
-        "pres24_dem_share": weighted(12),
     }
+    politics = selected_president_aggregate(
+        con, "p.fips IN (%s)" % ",".join("?" * len(fips)), fips
+    )
+    values["pres24_dem_share"] = politics.dem_share
+    values["political_precinct_count"] = politics.precinct_count
     columns = [d[1] for d in con.execute("PRAGMA table_info(baselines)").fetchall()]
     if "region|DMV" in {r[0] for r in con.execute("SELECT scope FROM baselines") }:
         con.execute("DELETE FROM baselines WHERE scope = 'region|DMV'")

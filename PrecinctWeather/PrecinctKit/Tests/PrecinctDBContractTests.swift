@@ -21,8 +21,8 @@ final class PrecinctDBContractTests: XCTestCase {
         for location in knownLocations {
             let hit = db.lookup(lon: location.lon, lat: location.lat)
             XCTAssertEqual(hit?.profile.state, location.state)
-            XCTAssertFalse(hit?.rings.isEmpty ?? true)
-            XCTAssertTrue(hit?.rings.flatMap { $0 }.allSatisfy {
+            XCTAssertFalse(hit?.polygons.isEmpty ?? true)
+            XCTAssertTrue(hit?.polygons.flatMap { [$0.exterior] + $0.interiors }.flatMap { $0 }.allSatisfy {
                 $0.latitude.isFinite && $0.longitude.isFinite
             } ?? false)
         }
@@ -71,6 +71,15 @@ final class PrecinctDBContractTests: XCTestCase {
 
         XCTAssertNil(db.lookupForSearch(lon: -72.5, lat: 40.0),
                      "search must not turn a genuinely uncovered location into a precinct")
+    }
+
+    func testBundledGreenePrecinctPreservesItsInteriorHoleForRendering() throws {
+        let db = PrecinctDB.shared
+        let hit = try XCTUnwrap(db.precinct(unitID: "36039-:-36039000039"))
+
+        XCTAssertEqual(hit.polygons.count, 1)
+        XCTAssertEqual(hit.polygons[0].interiors.count, 1)
+        XCTAssertNil(db.lookup(lon: -74.134698, lat: 42.188291))
     }
 
     func testFunFactsAndLeaderboardsResolveExactPrecincts() {
@@ -352,6 +361,151 @@ final class PrecinctDBContractTests: XCTestCase {
         )
     }
 
+    func testBundledCVAPNeverExceedsKnownVotingAgePopulation() throws {
+        let url = try XCTUnwrap(
+            Bundle(for: PrecinctDB.self).url(forResource: "nyc_precincts", withExtension: "sqlite")
+        )
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READONLY, nil), SQLITE_OK)
+        let handle = try XCTUnwrap(database)
+        defer { sqlite3_close(handle) }
+
+        XCTAssertEqual(
+            try intScalar(
+                handle,
+                "SELECT count(*) FROM precincts "
+                    + "WHERE cvap IS NOT NULL AND vap_total IS NOT NULL AND cvap > vap_total"
+            ),
+            0,
+            "CVAP must be capped at VAP only when both denominators are known"
+        )
+    }
+
+    func testBundledTurnoutMatchesStoredVotesAndCVAPContract() throws {
+        let url = try XCTUnwrap(
+            Bundle(for: PrecinctDB.self).url(forResource: "nyc_precincts", withExtension: "sqlite")
+        )
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READONLY, nil), SQLITE_OK)
+        let handle = try XCTUnwrap(database)
+        defer { sqlite3_close(handle) }
+
+        XCTAssertEqual(
+            try intScalar(
+                handle,
+                """
+                SELECT count(*) FROM precincts
+                WHERE CASE
+                  WHEN lean_votes IS NULL OR cvap IS NULL OR cvap < 50
+                       OR lean_votes * 1.0 / cvap > 1.15
+                    THEN turnout_est IS NOT NULL
+                  ELSE turnout_est IS NULL
+                       OR abs(turnout_est - lean_votes * 1.0 / cvap) > 1e-12
+                END
+                """
+            ),
+            0,
+            "Turnout must use stored lean_votes and CVAP with the under-50 and over-115% guards"
+        )
+    }
+
+    func testEveryPoliticalBaselineUsesSelectedElectionVoteTotals() throws {
+        let url = try XCTUnwrap(
+            Bundle(for: PrecinctDB.self).url(forResource: "nyc_precincts", withExtension: "sqlite")
+        )
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READONLY, nil), SQLITE_OK)
+        let handle = try XCTUnwrap(database)
+        defer { sqlite3_close(handle) }
+
+        XCTAssertEqual(
+            try intScalar(
+                handle,
+                """
+                SELECT count(*) FROM precincts p
+                WHERE p.lean_year IS NOT NULL AND (
+                    SELECT count(*) FROM precinct_elections e
+                    WHERE e.unit_id = p.unit_id
+                      AND e.office = 'president'
+                      AND e.year = p.lean_year
+                ) != 1
+                """
+            ),
+            0,
+            "Every selected lean year must resolve to exactly one presidential result"
+        )
+
+        let sql = """
+            WITH scope_membership(unit_id, scope) AS (
+                SELECT unit_id, state FROM precincts
+                UNION ALL
+                SELECT unit_id, 'county|' || state || '|' || borough
+                FROM precincts WHERE borough IS NOT NULL AND borough != ''
+                UNION ALL
+                SELECT unit_id, 'metro|NY|New York City'
+                FROM precincts
+                WHERE state = 'NY'
+                  AND borough IN ('Manhattan', 'Brooklyn', 'Queens', 'Bronx', 'Staten Island')
+                UNION ALL
+                SELECT unit_id, 'region|DMV'
+                FROM precincts
+                WHERE fips IN (
+                    '11001', '24031', '24033', '51013', '51510', '51059',
+                    '51600', '51610', '51107', '51153', '51683', '51685'
+                )
+            ), selected_votes AS (
+                SELECT membership.scope,
+                       sum(election.dem) AS dem,
+                       sum(election.rep) AS rep
+                FROM scope_membership membership
+                JOIN precincts precinct USING(unit_id)
+                JOIN precinct_elections election
+                  ON election.unit_id = precinct.unit_id
+                 AND election.office = 'president'
+                 AND election.year = precinct.lean_year
+                WHERE election.dem IS NOT NULL
+                  AND election.rep IS NOT NULL
+                  AND election.dem >= 0
+                  AND election.rep >= 0
+                  AND election.dem + election.rep > 0
+                GROUP BY membership.scope
+            )
+            SELECT baseline.scope,
+                   baseline.pres24_dem_share,
+                   selected_votes.dem * 1.0 / (selected_votes.dem + selected_votes.rep)
+            FROM baselines baseline
+            LEFT JOIN selected_votes USING(scope)
+            ORDER BY baseline.scope
+            """
+        var statement: OpaquePointer?
+        XCTAssertEqual(sqlite3_prepare_v2(handle, sql, -1, &statement, nil), SQLITE_OK, sql)
+        let query = try XCTUnwrap(statement)
+        defer { sqlite3_finalize(query) }
+
+        var checked = 0
+        var failures: [String] = []
+        var stepResult = sqlite3_step(query)
+        while stepResult == SQLITE_ROW {
+            checked += 1
+            let scope = String(cString: sqlite3_column_text(query, 0))
+            if sqlite3_column_type(query, 1) == SQLITE_NULL
+                || sqlite3_column_type(query, 2) == SQLITE_NULL {
+                failures.append("\(scope): missing stored or selected-election share")
+            } else {
+                let stored = sqlite3_column_double(query, 1)
+                let expected = sqlite3_column_double(query, 2)
+                if abs(stored - expected) > 1e-12 {
+                    failures.append("\(scope): stored \(stored), selected-election vote share \(expected)")
+                }
+            }
+            stepResult = sqlite3_step(query)
+        }
+
+        XCTAssertEqual(stepResult, SQLITE_DONE)
+        XCTAssertEqual(checked, 511, "Every persisted state, county, metro, and region scope must be checked")
+        XCTAssertTrue(failures.isEmpty, failures.prefix(20).joined(separator: "\n"))
+    }
+
     func testEveryBundledGeometryDecodesWithTheShippingSwiftParser() throws {
         let url = try XCTUnwrap(
             Bundle(for: PrecinctDB.self).url(forResource: "nyc_precincts", withExtension: "sqlite")
@@ -362,6 +516,7 @@ final class PrecinctDBContractTests: XCTestCase {
         defer { sqlite3_close(handle) }
 
         var totalChecked = 0
+        var geometriesWithHoles = 0
         var failures: [String] = []
         for table in ["precincts", "county_lean_regions"] {
             var statement: OpaquePointer?
@@ -382,7 +537,11 @@ final class PrecinctDBContractTests: XCTestCase {
                 let rowID = sqlite3_column_int64(statement, 0)
                 if let bytes = sqlite3_column_blob(statement, 1) {
                     let data = Data(bytes: bytes, count: Int(sqlite3_column_bytes(statement, 1)))
-                    let rings = WKBGeometry.exteriorRings(data)
+                    let polygons = WKBGeometry.drawablePolygons(data)
+                    if table == "precincts", polygons.contains(where: { !$0.interiors.isEmpty }) {
+                        geometriesWithHoles += 1
+                    }
+                    let rings = polygons.flatMap { [$0.exterior] + $0.interiors }
                     if rings.isEmpty || !rings.joined().allSatisfy({
                         $0.latitude.isFinite && $0.longitude.isFinite
                     }) {
@@ -402,6 +561,7 @@ final class PrecinctDBContractTests: XCTestCase {
         }
 
         XCTAssertGreaterThan(totalChecked, 0)
+        XCTAssertEqual(geometriesWithHoles, 1_037)
         XCTAssertTrue(failures.isEmpty, failures.joined(separator: ", "))
     }
 

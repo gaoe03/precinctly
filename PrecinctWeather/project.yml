@@ -59,7 +59,14 @@ targets:
       - PrecinctKit/Tests
       - App/Support/SearchResolutionGate.swift
       - App/Share/ShareCardElectionPresentation.swift
+      - App/Share/PrecinctPolygonRenderer.swift
+      - App/Share/ShareCard.swift
+      - App/Share/ShareCardMap.swift
+      - App/Share/ShareCardPreview.swift
+      - App/Support/Formatting.swift
+      - App/Support/BuildingBlocks.swift
       - Widget/WidgetLocationPolicy.swift
+      - Widget/PrecinctWidget.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.gaoe.PrecinctKitTests

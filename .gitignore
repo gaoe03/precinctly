@@ -3,6 +3,9 @@
 *.db-shm
 *.db-wal
 *.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite-journal
 public_data/
 node_modules/
 backups/
@@ -28,6 +31,7 @@ CLAUDE.md
 AGENTS.md
 .claude/
 .agents/
+.agent-context/
 package.json
 package-lock.json
 capture.js
@@ -43,3 +47,4 @@ site/type-test.html
 # local working docs and archived one-off scripts (this machine only)
 notes/
 appstore-screenshots/
+.test-results/

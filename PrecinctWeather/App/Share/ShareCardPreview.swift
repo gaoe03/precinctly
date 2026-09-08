@@ -17,11 +17,13 @@ import PrecinctKit
 
 struct ShareCardPreview: View {
     let profile: PrecinctProfile
-    let rings: [[CLLocationCoordinate2D]]
+    let polygons: [PrecinctPolygon]
     let trend: [ElectionResult]
     let baseline: Baseline?
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dts
+    @Environment(\.colorScheme) private var colorScheme
     @AppStorage("hapticsEnabled") private var hapticsEnabled = true
     @State private var card: RenderedCard?
     /// Which action just succeeded, so its own button can report it. Confirmation belongs at the
@@ -37,18 +39,26 @@ struct ShareCardPreview: View {
 
     var body: some View {
         ZStack {
-            Backdrop.base.ignoresSafeArea()
+            backdrop.base.ignoresSafeArea()
             VStack(spacing: 0) {
                 header
                 preview
                 actions
             }
         }
-        .task {
+        .task(id: colorScheme) {
             // Rendered here rather than before presenting: the map hero is a network fetch, and
             // a screen that appears instantly and fills in beats a button that hangs.
-            card = await RenderedCard.make(profile: profile, rings: rings,
-                                           trend: trend, baseline: baseline)
+            card = nil
+            done = nil
+            problem = nil
+            showActivity = false
+            let rendered = await RenderedCard.make(
+                profile: profile, polygons: polygons, trend: trend, baseline: baseline,
+                colorScheme: colorScheme
+            )
+            guard !Task.isCancelled else { return }
+            card = rendered
         }
         .sheet(isPresented: $showActivity) {
             if let card {
@@ -70,9 +80,9 @@ struct ShareCardPreview: View {
             Button { dismiss() } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(backdrop.primary)
                     .frame(width: 34, height: 34)
-                    .background(Circle().fill(.white.opacity(0.14)))
+                    .background(Circle().fill(backdrop.secondaryFill))
             }
             .accessibilityLabel("Close")
             Spacer()
@@ -90,13 +100,14 @@ struct ShareCardPreview: View {
             if let card {
                 Image(uiImage: card.image)
                     .resizable().scaledToFit()
-                    .shadow(color: .black.opacity(0.5), radius: 18, y: 8)
+                    .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+                    .shadow(color: .black.opacity(colorScheme == .dark ? 0.5 : 0.14), radius: 18, y: 8)
                     .accessibilityLabel("Share card for \(title). \(election.accessibilitySummary)")
             } else {
                 RoundedRectangle(cornerRadius: 26, style: .continuous)
-                    .fill(.white.opacity(0.06))
+                    .fill(backdrop.secondaryFill)
                     .aspectRatio(ShareCard.width / 900, contentMode: .fit)
-                    .overlay { ProgressView().tint(.white) }
+                    .overlay { ProgressView().tint(backdrop.primary) }
                     .accessibilityLabel("Preparing the card")
             }
         }
@@ -110,7 +121,7 @@ struct ShareCardPreview: View {
             if let problem {
                 Text(problem)
                     .font(.footnote.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.8))
+                    .foregroundStyle(backdrop.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .transition(.opacity)
             }
@@ -119,12 +130,13 @@ struct ShareCardPreview: View {
                     .font(.headline)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 13)
-                    .background(Capsule().fill(.white))
-                    .foregroundStyle(Backdrop.base)
+                    .background(Capsule().fill(backdrop.primary))
+                    .foregroundStyle(backdrop.base)
             }
-            // The two buttons split the row evenly, so swapping in a shorter past-tense label
-            // does not move anything.
-            HStack(spacing: 10) {
+            // Large text needs the full width for each action label.
+            let layout = dts.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 10))
+                : AnyLayout(HStackLayout(spacing: 10))
+            layout {
                 secondary(done == .saved ? "Saved" : "Save to Photos",
                           done == .saved ? "checkmark" : "square.and.arrow.down",
                           confirmed: done == .saved) { save() }
@@ -146,11 +158,14 @@ struct ShareCardPreview: View {
         Button(action: action) {
             Label(label, systemImage: icon)
                 .font(.subheadline.weight(.semibold))
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, dts.isAccessibilitySize ? 16 : 0)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
-                .background(Capsule().fill(.white.opacity(confirmed ? 0.26 : 0.12)))
-                .overlay(Capsule().strokeBorder(.white.opacity(confirmed ? 0.55 : 0.18)))
-                .foregroundStyle(.white)
+                .background(Capsule().fill(confirmed ? backdrop.confirmedFill : backdrop.secondaryFill))
+                .overlay(Capsule().strokeBorder(confirmed ? backdrop.confirmedRule : backdrop.rule))
+                .foregroundStyle(backdrop.primary)
         }
         .animation(.easeOut(duration: 0.18), value: confirmed)
     }
@@ -207,10 +222,36 @@ struct ShareCardPreview: View {
         withAnimation(.easeOut(duration: 0.18)) { problem = message }
     }
 
-    private enum Backdrop {
-        /// Fixed dark in both appearances. The card is warm paper, and a photo-viewer backdrop
-        /// is the one context where it reads as an object rather than as more app surface.
-        static let base = Color(red: 0.098, green: 0.106, blue: 0.129)
+    private var backdrop: Backdrop { Backdrop(colorScheme: colorScheme) }
+
+    private struct Backdrop {
+        let base: Color
+        let primary: Color
+        let secondary: Color
+        let secondaryFill: Color
+        let confirmedFill: Color
+        let rule: Color
+        let confirmedRule: Color
+
+        init(colorScheme: ColorScheme) {
+            if colorScheme == .dark {
+                base = Color(red: 0.098, green: 0.106, blue: 0.129)
+                primary = .white
+                secondary = .white.opacity(0.8)
+                secondaryFill = .white.opacity(0.12)
+                confirmedFill = .white.opacity(0.26)
+                rule = .white.opacity(0.18)
+                confirmedRule = .white.opacity(0.55)
+            } else {
+                base = Color(red: 0.945, green: 0.941, blue: 0.925)
+                primary = Color(red: 0.129, green: 0.145, blue: 0.184)
+                secondary = primary.opacity(0.75)
+                secondaryFill = primary.opacity(0.08)
+                confirmedFill = primary.opacity(0.16)
+                rule = primary.opacity(0.18)
+                confirmedRule = primary.opacity(0.45)
+            }
+        }
     }
 }
 
@@ -221,10 +262,13 @@ struct RenderedCard {
     let url: URL
 
     @MainActor
-    static func make(profile: PrecinctProfile, rings: [[CLLocationCoordinate2D]],
-                     trend: [ElectionResult], baseline: Baseline?) async -> RenderedCard? {
-        guard let image = await ShareCardRenderer.image(profile: profile, rings: rings,
-                                                        trend: trend, baseline: baseline),
+    static func make(profile: PrecinctProfile, polygons: [PrecinctPolygon],
+                     trend: [ElectionResult], baseline: Baseline?,
+                     colorScheme: ColorScheme) async -> RenderedCard? {
+        guard let image = await ShareCardRenderer.image(profile: profile, polygons: polygons,
+                                                        trend: trend, baseline: baseline,
+                                                        colorScheme: colorScheme),
+              !Task.isCancelled,
               let url = ShareCardRenderer.write(image, for: profile) else { return nil }
         return RenderedCard(image: image, url: url)
     }

@@ -17,7 +17,7 @@ Reads sources READ-ONLY and emits a compact SQLite with, per precinct:
   - baselines: one row per state (for "vs <state>" comparisons)
 
 Usage:
-    python build_region_precincts.py                          # CA,NY,MA,TX (routed per state)
+    python build_region_precincts.py --out /tmp/current.sqlite
     python build_region_precincts.py --states NY --source josh --out /tmp/ny.sqlite
 """
 import argparse
@@ -29,6 +29,11 @@ from shapely import wkb, wkt
 from shapely.ops import transform as shp_transform
 from shapely.validation import make_valid
 from pyproj import Transformer
+
+try:
+    from pipeline.data_contract import aggregate_two_party_votes, cap_cvap_to_vap, turnout_from_cvap
+except ModuleNotFoundError:  # Supports python3 pipeline/build_region_precincts.py.
+    from data_contract import aggregate_two_party_votes, cap_cvap_to_vap, turnout_from_cvap
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "precincts_2026_primary.db")
@@ -177,7 +182,7 @@ class Baseline:
         self.owner = 0.0; self.renter = 0.0
         self.income_num = 0.0; self.income_den = 0.0
         self.age_num = 0.0; self.age_den = 0.0
-        self.dem24 = 0; self.rep24 = 0
+        self.selected_dem = 0; self.selected_rep = 0
 
     def finish(self, scope):
         def frac(n, d): return (n / d) if d else None
@@ -194,7 +199,7 @@ class Baseline:
             "income_median": int(self.income_num / self.income_den) if self.income_den else None,
             "pct_renter": frac(self.renter, self.owner + self.renter),
             "avg_age": frac(self.age_num, self.age_den),
-            "pres24_dem_share": two_party(self.dem24, self.rep24),
+            "pres24_dem_share": two_party(self.selected_dem, self.selected_rep),
         }
 
 
@@ -418,8 +423,8 @@ def build(records, out_path):
 
         dm = rec["demographics"]
         pop_total = dm.get("pop_total")
-        cvap = dm.get("cvap")
         vap_total = dm.get("vap_total")
+        cvap = cap_cvap_to_vap(dm.get("cvap"), vap_total)
         race_counts = {v: dm.get(v) for v in RACE_VARS}
         has_demo = pop_total is not None and pop_total > 0
         if not has_demo:
@@ -454,9 +459,7 @@ def build(records, out_path):
         if income is not None and income <= 0:
             income = None
         avg_age = dm.get("avg_age")
-        turnout = (lean_votes / cvap) if (lean_votes is not None and cvap and cvap >= 50) else None
-        if turnout is not None and turnout > 1.15:
-            turnout = None
+        turnout = turnout_from_cvap(lean_votes, cvap)
 
         out_records.append({
             "rowid": rowid, "unit_id": unit_id, "fips": fips, "state": state_abbr,
@@ -503,8 +506,9 @@ def build(records, out_path):
                     b.income_num += income * households; b.income_den += households
                 if avg_age is not None:
                     b.age_num += avg_age * pop_total; b.age_den += pop_total
-            if dL is not None: b.dem24 += dL
-            if rL is not None: b.rep24 += rL
+            politics = aggregate_two_party_votes([(dL, rL)])
+            b.selected_dem += politics.dem
+            b.selected_rep += politics.rep
 
     print(f"Built records: {len(out_records)}   election rows: {len(election_rows)}")
     print(f"Skipped(no geom): {skipped_no_geom}   dropped(empty): {skipped_empty}   missing pres24: {n_no_pres}   missing demo: {n_no_demo}")
@@ -544,17 +548,29 @@ def build(records, out_path):
     print(f"  precincts: {len(out_records)}   data_complete=1: {complete}   states/baselines: {len(bases)}")
 
 
-def main():
+def parse_args(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", default=SRC)
     ap.add_argument("--states", default="CA,NY,MA,TX", help="comma-separated state_abbr")
     ap.add_argument("--source", default="auto", choices=["auto", "josh", "vtd", "ca24", "p24"],
                     help="force an adapter for all states (default: route per SOURCE_BY_STATE)")
-    ap.add_argument("--mode", default="vtd", choices=["vtd", "p2024"],
-                    help="vtd = current 2020-VTD sourcing; p2024 = fully-public 2024 precincts")
+    ap.add_argument("--mode", default="p2024", choices=["vtd", "p2024"],
+                    help="p2024 = current public precincts; vtd = legacy 2020-VTD sourcing")
     ap.add_argument("--data-dir", default=DATA_DIR)
-    ap.add_argument("--out", default=os.path.join(ROOT, "nyc_precincts.sqlite"))
-    args = ap.parse_args()
+    ap.add_argument("--out", required=True, help="new SQLite output path")
+    args = ap.parse_args(argv)
+
+    out_path = os.path.abspath(args.out)
+    if os.path.lexists(out_path):
+        ap.error(f"output already exists, choose a fresh path: {out_path}")
+    if not os.path.isdir(os.path.dirname(out_path)):
+        ap.error(f"output directory does not exist: {os.path.dirname(out_path)}")
+    args.out = out_path
+    return args
+
+
+def main(argv=None):
+    args = parse_args(argv)
 
     states = [s.strip().upper() for s in args.states.split(",") if s.strip()]
     print(f"Source : {args.src}\nStates : {states}\nSourceMode: {args.source}\nOutput : {args.out}")
