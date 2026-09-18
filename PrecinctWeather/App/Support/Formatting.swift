@@ -1,33 +1,34 @@
 import SwiftUI
 import UIKit
+import PrecinctKit
 
 // MARK: - Helpers
 
 enum Palette {
-    private static func lerp(_ a: (Double, Double, Double), _ b: (Double, Double, Double), _ t: Double) -> Color {
-        Color(red: a.0 + (b.0 - a.0) * t, green: a.1 + (b.1 - a.1) * t, blue: a.2 + (b.2 - a.2) * t)
-    }
     static func lean(_ share: Double?) -> Color {
-        guard let s = share else { return .gray }
-        let red = (0.85, 0.16, 0.16), purple = (0.55, 0.25, 0.7), blue = (0.13, 0.4, 0.9)
-        let t = max(0, min(1, s))
-        return t >= 0.5 ? lerp(purple, blue, (t - 0.5) * 2) : lerp(red, purple, t * 2)
+        Brand.leanColor(share)
     }
     /// Canonical party anchors for bars, labels, and legends. Every surface that colors
     /// "Democrat" or "Republican" as a category (not a data value) uses these, so the app
     /// has exactly one Democrat blue and one Republican red.
-    static let dem = lean(0.9)
-    static let rep = lean(0.1)
-    /// Restrained single-hue (slate/indigo) ramp keyed by rank: largest group darkest.
+    static var dem: Color { lean(0.9) }
+    static var rep: Color { lean(0.1) }
+    /// One-hue ink ramp keyed by rank: largest group darkest.
     /// Lighter base in dark mode so low-opacity ranks stay visible over dark fills.
     static func rankTint(_ rank: Int) -> Color {
-        let base = Color(UIColor { tc in
-            tc.userInterfaceStyle == .dark
-                ? UIColor(red: 0.62, green: 0.66, blue: 0.82, alpha: 1)
-                : UIColor(red: 0.36, green: 0.40, blue: 0.58, alpha: 1)
-        })
+        let base = Brand.rankBase
         let opacity = max(0.35, 1.0 - Double(rank) * 0.16)
         return base.opacity(opacity)
+    }
+}
+
+extension Baseline {
+    /// The comparison area as a reader names it: "Alameda County" (not the city of Alameda),
+    /// "Queens" for a borough, "NYC", "NY".
+    var readerName: String {
+        let parts = scope.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+        if parts.first == "county", parts.count == 3 { return countyDisplay(parts[2]) }
+        return displayName
     }
 }
 
@@ -55,13 +56,14 @@ enum Delta {
     static func points(_ v: Double?, _ b: Double?, _ label: String) -> (String, Bool)? {
         guard let v, let b else { return nil }
         let d = Int(((v - b) * 100).rounded())
-        return ("\(d >= 0 ? "+" : "−")\(abs(d)) vs \(label)", d >= 0)
+        return ("\(d >= 0 ? "+" : "−")\(abs(d)) \(abs(d) == 1 ? "pt" : "pts")" + (label.isEmpty ? "" : " vs \(label)"), d >= 0)
     }
     static func money(_ v: Int?, _ b: Int?, _ label: String) -> (String, Bool)? {
-        guard let v, let b else { return nil }
+        // A top-coded income ($250k+) has no exact value, so no exact gap either.
+        guard let v, let b, v < 250001 else { return nil }
         let d = v - b
         let k = Double(abs(d)) / 1000
         let amt = k >= 1 ? "$\(Int(k.rounded()))k" : "$\(abs(d))"
-        return ("\(d >= 0 ? "+" : "−")\(amt) vs \(label)", d >= 0)
+        return ("\(d >= 0 ? "+" : "−")\(amt)" + (label.isEmpty ? "" : " vs \(label)"), d >= 0)
     }
 }

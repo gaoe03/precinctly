@@ -11,9 +11,14 @@ struct PrecinctWeatherApp: App {
     /// and the window override also covers sheets, covers, and alerts consistently.
     @AppStorage("appearanceMode") private var appearanceMode = "auto"
 
+    init() { Brand.configureAppearance() }
+
     var body: some Scene {
         WindowGroup {
-            rootView
+            ContentView()
+                .font(.bt(.body))
+                .tint(Color(Brand.tint))
+                .buttonBorderShape(Brand.buttonBorderShape)
                 .environmentObject(model)   // ContentView's own .onAppear calls model.start()
                 .onAppear { Self.applyAppearance(appearanceMode) }
                 .onChange(of: appearanceMode) { Self.applyAppearance(appearanceMode) }
@@ -22,19 +27,6 @@ struct PrecinctWeatherApp: App {
                     if scenePhase == .background { model.suspendLocationUpdates() }
                 }
         }
-    }
-
-    @ViewBuilder
-    private var rootView: some View {
-        #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("-onboardingPrototype") {
-            NativeOnboardingPrototype()
-        } else {
-            ContentView()
-        }
-        #else
-        ContentView()
-        #endif
     }
 
     private static func applyAppearance(_ mode: String) {

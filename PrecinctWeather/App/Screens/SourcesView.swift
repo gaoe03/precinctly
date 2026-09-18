@@ -3,16 +3,18 @@ import SwiftUI
 struct SourcesView: View {
     var body: some View {
         List {
-            Section("How the data is built") {
-                Text("Precinctly combines boundaries, election results, and demographic statistics into an offline SQLite database. We join and crosswalk records, simplify map shapes, and calculate the values shown in the app.")
+            Section {
+                Text("Precinctly puts precinct maps, election results, and census figures into one database on your phone. We match records across sources, simplify map shapes, and calculate every number in the app.")
+                    .font(.bt(.subheadline))
                 Text("No source listed here endorses Precinctly. Data is provided as is.")
-                    .foregroundStyle(.secondary)
-            }
+                    .brandNoteStyle()
+            } header: { BrandListHeader("How the data is built") }
+            .listRowSeparator(.hidden)
 
-            Section("Government data") {
+            Section {
                 source(
                     "U.S. Census Bureau",
-                    "2020 TIGER/Line precinct boundaries, 2020 redistricting data, and 2019–2023 American Community Survey estimates.",
+                    "2020 TIGER/Line precinct boundaries, 2020 redistricting data, and 2019 to 2023 American Community Survey estimates.",
                     "https://www.census.gov/programs-surveys/geography/guidance/tiger-data-products-guide.html"
                 )
                 source(
@@ -20,16 +22,17 @@ struct SourcesView: View {
                     "California 2024 precinct boundaries, crosswalks, and election returns.",
                     "https://statewidedatabase.org/d20/g24.html"
                 )
-            }
+            } header: { BrandListHeader("Government data") }
+            .listRowSeparator(.hidden)
 
-            Section("Election and redistricting data") {
+            Section {
                 sourceNote(
                     "Privately supplied Oregon and Colorado dataset",
                     "Precinct boundaries and demographic fields for Oregon and Colorado. In Oregon, 1,296 precincts use 2020 presidential results, one uses 2016 results, and three have no usable election result. In Colorado, 3,138 precincts use 2024 results, 21 use 2020 results, and four have no usable election result. Precincts without a usable result keep their demographic profiles but do not show a political lean."
                 )
                 sourceNote(
                     "Privately supplied DMV dataset",
-                    "Curated precinct boundaries, election results, and demographic fields for Washington, DC, Montgomery and Prince George's Counties, and Northern Virginia. DC election values use 2020. Maryland and Virginia use the source's latest available results."
+                    "Curated precinct boundaries, election results, and demographic fields for Washington, DC, Montgomery and Prince George's Counties, and Northern Virginia. DC election values use 2020. Maryland and Virginia use the source's latest available results."
                 )
                 source(
                     "DC Open Data",
@@ -38,7 +41,7 @@ struct SourcesView: View {
                 )
                 source(
                     "Dave's Redistricting",
-                    "New York, Massachusetts, and Texas election and voting-age population fields. © 2024–2026 Social Good Fund.",
+                    "New York, Massachusetts, and Texas election and voting-age population fields. © 2024 to 2026 Social Good Fund.",
                     "https://github.com/dra2020/vtd_data/tree/22cb7f7a653140d260aafebf4716a7bb13c1b935"
                 )
                 source(
@@ -61,9 +64,10 @@ struct SourcesView: View {
                     "Massachusetts 2024 presidential results include data from The New York Times.",
                     "https://github.com/nytimes/presidential-precinct-map-2024"
                 )
-            }
+            } header: { BrandListHeader("Election and redistricting data") }
+            .listRowSeparator(.hidden)
 
-            Section("License information") {
+            Section {
                 source(
                     "CC BY-SA 4.0",
                     "Some packaged data is offered under the Creative Commons Attribution-ShareAlike 4.0 license, with additional source terms noted above.",
@@ -75,13 +79,21 @@ struct SourcesView: View {
                     "https://davesredistricting.org/TermsOfUse-July-2024.pdf"
                 )
                 source(
+                    "Libre Franklin",
+                    "The app's typeface, by the Libre Franklin Project Authors, used under the SIL Open Font License 1.1.",
+                    "https://openfontlicense.org"
+                )
+                source(
                     "Statewide Database terms",
                     "Current terms published by the California Statewide Database.",
                     "https://dev.statewidedatabase.org/terms-conditions"
                 )
-            }
+            } header: { BrandListHeader("License information") }
+            .listRowSeparator(.hidden)
         }
-        .navigationTitle("Sources and Licenses")
+        .brandList()
+        .brandCloseButton()
+        .navigationTitle("Sources and licenses")
         .navigationBarTitleDisplayMode(.inline)
     }
 
@@ -89,15 +101,13 @@ struct SourcesView: View {
         Link(destination: URL(string: urlString)!) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text(title).font(.subheadline.weight(.semibold))
+                    Text(title).font(.bt(.subheadline, .semibold))
                     Spacer()
-                    Image(systemName: "arrow.up.right.square")
-                        .font(.caption)
+                    Image(systemName: "arrow.up.right")
+                        .font(.bt(.caption))
                         .foregroundStyle(.secondary)
                 }
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(detail).brandNoteStyle()
             }
             .foregroundStyle(.primary)
             .padding(.vertical, 2)
@@ -107,10 +117,8 @@ struct SourcesView: View {
 
     private func sourceNote(_ title: String, _ detail: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.subheadline.weight(.semibold))
-            Text(detail)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Text(title).font(.bt(.subheadline, .semibold))
+            Text(detail).brandNoteStyle()
         }
         .padding(.vertical, 2)
     }

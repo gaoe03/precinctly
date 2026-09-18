@@ -27,25 +27,27 @@ struct SettingsView: View {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
     }
 
+    @State private var debugSources = false
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Appearance") {
+            List {
+                Section {
                     AppearanceModeRow(selection: $appearanceMode)
-                }
+                } header: { BrandListHeader("Appearance") }
+                .listRowSeparator(.hidden)
 
-                Section("Map") {
+                Section {
                     Toggle("Color nearby precincts", isOn: $colorNeighbors)
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
-                            Text("Lean color strength")
+                            Text("Color strength")
                             Spacer()
-                            Text(intensityLabel).font(.subheadline).foregroundStyle(.secondary)
+                            Text(intensityLabel).foregroundStyle(Color.primary)
                         }
                         Slider(value: Binding(get: { liveTint ?? leanTintIntensity },
                                               set: { liveTint = $0 }),
                                in: 0.25...1.0) {
-                            Text("Lean color strength")
+                            Text("Color strength")
                         } minimumValueLabel: {
                             Image(systemName: "circle").imageScale(.small).foregroundStyle(.tertiary)
                         } maximumValueLabel: {
@@ -55,44 +57,67 @@ struct SettingsView: View {
                         }
                         .accessibilityValue(intensityLabel)
                     }
-                }
+                } header: { BrandListHeader("Map") }
+                .listRowSeparator(.hidden)
 
                 Section {
                     Picker("Default coverage area", selection: $defaultState) {
                         ForEach(appStates) { Text($0.name).tag($0.abbr) }
                     }
+                    .tint(Color(uiColor: .label))
                     Toggle("Haptic feedback", isOn: $hapticsEnabled)
+                    // Runs the first-run tour again. It leaves every setting and the location
+                    // permission as they are.
+                    Button("Replay the tour") {
+                        dismiss()
+                        OnboardingTour.shared.start(replay: true)
+                    }
+                    .foregroundStyle(Color.primary)
                 } header: {
-                    Text("General")
+                    BrandListHeader("General")
                 } footer: {
                     Text(Coverage.namesSentence)
+                        .brandNoteStyle()
                 }
-
-                Section("Widget") {
-                    Text("Add the Precinctly widget from your Home Screen: touch and hold an empty spot, tap Edit, then Add Widget, and search for Precinctly.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
+                .listRowSeparator(.hidden)
 
                 Section {
-                    NavigationLink("Sources and licenses") { SourcesView() }
+                    Text("Add the Precinctly widget from your Home Screen: touch and hold an empty spot, tap Edit, then Add Widget, and search for Precinctly.")
+                        .brandNoteStyle()
+                } header: { BrandListHeader("Widget") }
+                .listRowSeparator(.hidden)
+
+                Section {
+                    NavigationLink { SourcesView() } label: { BrandLinkRow(title: "Sources and licenses") }
+                        .brandHideDisclosure()
+
                     Link(destination: URL(string: "https://precinct.ethangao.xyz/privacy.html")!) {
-                        LabeledContent("Privacy policy") { Image(systemName: "arrow.up.right").font(.footnote) }
+                        LabeledContent("Privacy policy") { Image(systemName: "arrow.up.right").font(.bt(.footnote)) }
                     }
                     LabeledContent("Version", value: appVersion)
                 } header: {
-                    Text("About")
+                    BrandListHeader("About")
                 } footer: {
-                    Text("Boundaries, election returns, and demographics are combined from government and third-party sources. Full notices are under Sources and licenses. Your location is used only on your device and never leaves it.")
+                    Text("Boundaries, election results, and demographics are combined from government and third-party sources. Full notices are under Sources and licenses. Your location is used only on your device and never leaves it.")
+                        .brandNoteStyle()
                 }
+                .listRowSeparator(.hidden)
             }
+            .brandList()
+            .navigationDestination(isPresented: $debugSources) { SourcesView() }
+            #if DEBUG
+            .task { if ProcessInfo.processInfo.arguments.contains("-openSources") { try? await Task.sleep(nanoseconds: 600_000_000); debugSources = true } }   // screenshot capture
+            #endif
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
+                    BrandDoneButton { dismiss() }
                 }
+                .brandHideGlass()
             }
         }
+        .environment(\.brandClose, { dismiss() })
     }
 }
 
@@ -118,19 +143,16 @@ private struct AppearanceModeRow: View {
                         Image(systemName: option.icon)
                             .font(.system(size: 19, weight: .medium))
                         Text(option.label)
-                            .font(.footnote.weight(.semibold))
+                            .font(.bt(.footnote, .semibold))
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 11)
                     .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(selected ? Color.accentColor.opacity(0.14) : Color(.tertiarySystemFill))
+                        Brand.buttonShape
+                            .fill(selected ? Color(uiColor: .label) : Color(.tertiarySystemFill))
                     )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 1.5)
-                    )
-                    .foregroundStyle(selected ? Color.accentColor : Color.primary)
+                    // Selected is the ink fill, the same selected state as every chip.
+                    .foregroundStyle(selected ? Color(uiColor: .systemBackground) : Color.primary)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)

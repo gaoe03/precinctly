@@ -41,18 +41,22 @@ struct SearchView: View {
             List {
                 if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Section {
-                        ForEach(popularPlaces) { place in
+                        let places = popularPlaces
+                        ForEach(Array(places.enumerated()), id: \.offset) { i, place in
                             Button {
                                 choose(place.lat, place.lon)
                             } label: {
                                 resultLabel(title: place.name, subtitle: place.borough)
                             }
+                            .brandRowRule(last: i == places.count - 1)
                         }
                     } header: {
-                        Text("Popular places in \(stateName(model.selectedState))")
+                        BrandListHeader("Popular places in \(stateName(model.selectedState))")
                     } footer: {
                         Text("Search any street address, landmark, city, or business above.")
+                            .brandNoteStyle().padding(.top, 6)
                     }
+                    .listSectionSeparator(.hidden, edges: .all)
                 } else if search.isSearching {
                     HStack(spacing: 12) {
                         ProgressView()
@@ -80,7 +84,7 @@ struct SearchView: View {
                         noticeView(
                             icon: "mappin.slash",
                             title: "Outside covered areas",
-                            detail: "Precinctly currently covers California, Colorado, Massachusetts, New York, Oregon, Texas, and the DMV (Washington, DC, Montgomery and Prince George's Counties, and Northern Virginia). Try another address, or close search to explore the map."
+                            detail: "Precinctly currently covers California, Colorado, Massachusetts, New York, Oregon, Texas, and the DMV (Washington, DC, Montgomery and Prince George's Counties, and Northern Virginia). Try another address, or close search to explore the map."
                         ) {
                             Button("Clear search") { query = "" }
                         }
@@ -97,15 +101,19 @@ struct SearchView: View {
                     ContentUnavailableView.search(text: query)
                         .listRowBackground(Color.clear)
                 } else {
-                    Section("Addresses and places") {
-                        ForEach(search.suggestions, id: \.self) { suggestion in
+                    Section {
+                        let results = search.suggestions
+                        ForEach(Array(results.enumerated()), id: \.offset) { i, suggestion in
                             Button {
                                 Task { await choose(suggestion) }
                             } label: {
-                                resultLabel(title: suggestion.title, subtitle: suggestion.subtitle)
+                                resultLabel(title: suggestion.title, subtitle: Self.trimCountry(suggestion.subtitle))
                             }
                             .disabled(search.isResolving)
+                            .brandRowRule(last: i == results.count - 1)
                         }
+                    } header: {
+                        BrandListHeader("Addresses and places")
                     }
                 }
             }
@@ -113,9 +121,11 @@ struct SearchView: View {
                 if search.isResolving {
                     ProgressView("Finding precinct")
                         .padding(18)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+                        .background(Brand.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
                 }
             }
+            .brandList()
             .searchable(
                 text: $query,
                 placement: .navigationBarDrawer(displayMode: .always),
@@ -123,12 +133,20 @@ struct SearchView: View {
             )
             .textInputAutocapitalization(.words)
             .autocorrectionDisabled()
+            // The tour's step, inside the sheet that covers it. Picking a place finishes the step.
+            .safeAreaInset(edge: .bottom) {
+                TourSheetGuide(step: .search,
+                               text: "Type any address, or tap one of the popular places to jump there.",
+                               continueTitle: "Skip step", prominent: false, close: { dismiss() },
+                               beforeContinue: { OnboardingTour.shared.next() })
+            }
             .navigationTitle("Find a precinct")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
+                    BrandDoneButton { dismiss() }
                 }
+                .brandHideGlass()
             }
             .onChange(of: query) {
                 search.update(query: query, state: model.selectedState)
@@ -137,6 +155,9 @@ struct SearchView: View {
                 search.update(query: query, state: model.selectedState)
             }
             .onDisappear { search.cancel() }
+            #if DEBUG
+            .onAppear { if let q = UserDefaults.standard.string(forKey: "searchQuery") { query = q } }   // screenshot capture
+            #endif
         }
     }
 
@@ -150,13 +171,13 @@ struct SearchView: View {
                 .font(.system(size: 36, weight: .medium))
                 .foregroundStyle(.secondary)
                 .padding(.bottom, 6)
-            Text(title).font(.title3.weight(.semibold))
+            Text(title).font(.bt(.title3, .semibold))
             Text(detail)
-                .font(.subheadline)
+                .font(.bt(.subheadline))
                 .foregroundStyle(Color.secondary)
                 .multilineTextAlignment(.center)
             VStack(spacing: 10) { actions() }
-                .font(.body)
+                .font(.bt(.body))
                 .padding(.top, 10)
         }
         .frame(maxWidth: .infinity)
@@ -164,6 +185,14 @@ struct SearchView: View {
         .padding(.horizontal, 12)
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
+    }
+
+    /// Every result is in the US, so the trailing country only adds a wrapped line.
+    static func trimCountry(_ s: String) -> String {
+        for suffix in [", United States", "United States"] where s.hasSuffix(suffix) {
+            return String(s.dropLast(suffix.count))
+        }
+        return s
     }
 
     private func resultLabel(title: String, subtitle: String) -> some View {
@@ -174,7 +203,7 @@ struct SearchView: View {
                 .foregroundStyle(Color.primary)
             if !subtitle.isEmpty {
                 Text(subtitle)
-                    .font(.caption)
+                    .font(.bt(.caption))
                     .foregroundStyle(Color.secondary)
                     .lineLimit(2)
             }
