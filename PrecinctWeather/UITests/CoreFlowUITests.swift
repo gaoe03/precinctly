@@ -6,54 +6,6 @@ final class CoreFlowUITests: XCTestCase {
         continueAfterFailure = false
     }
 
-    func testNativeOnboardingPrototypeUsesRealSearchAndProfile() {
-        let app = XCUIApplication()
-        app.launchArguments = ["-onboardingPrototype", "-prototypeOnboardingComplete", "NO",
-                               "-disableLocation", "-hapticsEnabled", "NO", "-defaultState", "NY"]
-        app.launch()
-        XCTAssertTrue(app.buttons["Find a place"].waitForExistence(timeout: 15))
-        capturePrototype(app, "native-welcome")
-        app.buttons["How to add a widget"].tap()
-        XCTAssertTrue(app.staticTexts["Add a Home Screen widget"].waitForExistence(timeout: 5))
-        capturePrototype(app, "native-widget-guide")
-        app.buttons["Done"].tap()
-        XCTAssertTrue(app.buttons["Find a place"].waitForExistence(timeout: 5))
-        app.buttons["Find a place"].tap()
-        let result = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Times Square'")).firstMatch
-        XCTAssertTrue(result.waitForExistence(timeout: 10))
-        result.tap()
-        XCTAssertFalse(app.buttons["Find a place"].exists)
-        XCTAssertTrue(hero(in: app).waitForExistence(timeout: 15))
-        capturePrototype(app, "native-real-precinct")
-        app.terminate()
-        app.launchArguments = ["-onboardingPrototype", "-disableLocation", "-defaultState", "NY"]
-        app.launch()
-        XCTAssertTrue(app.buttons["Search addresses and places"].waitForExistence(timeout: 15))
-        XCTAssertFalse(app.buttons["Find a place"].exists)
-    }
-
-    func testNativeOnboardingLargeTextActionsRemainReachable() {
-        let app = XCUIApplication()
-        app.launchArguments = ["-onboardingPrototype", "-prototypeOnboardingComplete", "NO",
-                               "-appearanceMode", "dark", "-defaultState", "NY",
-                               "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
-        app.launch()
-        let explore = app.buttons["Explore the map first"]
-        XCTAssertTrue(explore.waitForExistence(timeout: 15))
-        for _ in 0..<10 where !explore.isHittable { app.swipeUp() }
-        XCTAssertTrue(explore.isHittable)
-        capturePrototype(app, "native-large-text-actions")
-        explore.tap()
-        XCTAssertFalse(app.buttons["Find a place"].exists)
-    }
-
-    private func capturePrototype(_ app: XCUIApplication, _ name: String) {
-        let attachment = XCTAttachment(screenshot: app.screenshot())
-        attachment.name = name
-        attachment.lifetime = .keepAlways
-        add(attachment)
-    }
-
     func testLocationFollowsMovementUntilManualExplorationThenLocateResumes() {
         let app = XCUIApplication()
         app.terminate()
@@ -113,7 +65,7 @@ final class CoreFlowUITests: XCTestCase {
         let footer = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'presidential vote. Demographics'")).firstMatch
         for _ in 0..<6 where !footer.isHittable { app.swipeUp() }
         XCTAssertTrue(footer.waitForExistence(timeout: 5))
-        XCTAssertEqual(footer.label, "2020 presidential vote. Demographics use the 2020 Census and ACS.")
+        XCTAssertEqual(footer.label, "2020 presidential vote. Demographics use the 2020 Census and the American Community Survey.")
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "election-year-footer"
         screenshot.lifetime = .keepAlways
@@ -127,7 +79,9 @@ final class CoreFlowUITests: XCTestCase {
         app.launchArguments = ["-hasOnboarded", "NO", "-hapticsEnabled", "NO", "-defaultState", "NY"]
         app.launch()
 
-        let start = app.buttons["Start reading"]
+        // Skipping the tour asks for location the usual way. The tour's own Locate step is
+        // covered in OnboardingTourUITests.
+        let start = app.buttons["Skip the tour"]
         XCTAssertTrue(start.waitForExistence(timeout: 15))
         XCTAssertTrue(start.isHittable)
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
@@ -149,7 +103,7 @@ final class CoreFlowUITests: XCTestCase {
         app.launchArguments = ["-hapticsEnabled", "NO", "-defaultState", "NY", "-disableLocation"]
         app.launch()
         XCTAssertTrue(app.buttons["Search addresses and places"].waitForExistence(timeout: 15))
-        XCTAssertFalse(app.buttons["Start reading"].exists, "Onboarding appeared again for a returning reader")
+        XCTAssertFalse(app.buttons["Show me around"].exists, "Onboarding appeared again for a returning reader")
         app.buttons["Search addresses and places"].tap()
         let popular = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Times Square'")).firstMatch
         XCTAssertTrue(popular.waitForExistence(timeout: 5))
@@ -166,7 +120,7 @@ final class CoreFlowUITests: XCTestCase {
         chooseDefaultCoverage("Oregon", in: app)
         app.buttons["Dark appearance"].tap()
         XCTAssertTrue(app.buttons["Dark appearance"].isSelected)
-        app.buttons["Done"].tap()
+        app.buttons["Close"].firstMatch.tap()
         app.terminate()
         app.launch()
 
@@ -179,7 +133,7 @@ final class CoreFlowUITests: XCTestCase {
         app.buttons["Auto appearance"].tap()
         XCTAssertTrue(app.buttons["Auto appearance"].isSelected)
         chooseDefaultCoverage("New York", in: app)
-        app.buttons["Done"].tap()
+        app.buttons["Close"].firstMatch.tap()
     }
 
     func testDismissedSearchPreservesSelectionAndCanBeReopened() {
@@ -192,7 +146,7 @@ final class CoreFlowUITests: XCTestCase {
         let originalProfile = profile.label
         app.buttons["Search addresses and places"].tap()
         XCTAssertTrue(app.searchFields["Address or place"].waitForExistence(timeout: 5))
-        app.buttons["Done"].tap()
+        app.buttons["Close"].firstMatch.tap()
         XCTAssertTrue(profile.waitForExistence(timeout: 5))
         XCTAssertEqual(profile.label, originalProfile)
 
@@ -203,6 +157,72 @@ final class CoreFlowUITests: XCTestCase {
         XCTAssertTrue(profile.waitForExistence(timeout: 15))
         XCTAssertNotEqual(profile.label, originalProfile, "Reopened search failed to replace the old profile")
         XCTAssertTrue(app.buttons["Switch coverage area, currently New York"].exists)
+    }
+
+    /// At peek a tap on the lean block expands the card. Once the card is open, the same block
+    /// opens By the Numbers at the lean chart, and each stat opens its own chart.
+    func testCardLeanAndStatsOpenTheirCharts() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-hasOnboarded", "YES", "-hapticsEnabled", "NO", "-disableLocation",
+                               "-defaultState", "OR", "-testUnitID", "41001-:-0001", "-appearanceMode", "light"]
+        app.launch()
+        let lean = hero(in: app)
+        XCTAssertTrue(lean.waitForExistence(timeout: 15))
+        // The page scrolls to the chart, past its own title, so wait on its toolbar button.
+        let numbers = app.buttons["About this data"]
+
+        // Peek: the hero is not a link. A tap expands the card and does not open By the Numbers.
+        XCTAssertTrue(app.buttons["Expand panel"].exists)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Political lean'")).firstMatch.exists,
+                       "The peek hero is a By the Numbers link")
+        lean.tap()
+        XCTAssertTrue(app.buttons["Collapse panel"].waitForExistence(timeout: 5), "A tap on the peek hero did not expand the card")
+        XCTAssertFalse(numbers.waitForExistence(timeout: 2), "A tap on the peek hero opened By the Numbers")
+        attach(app, "20-peek-tap-expands")
+
+        // Open card: the lean block is a link to the lean chart.
+        let leanLink = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Political lean R+45'")).firstMatch
+        XCTAssertTrue(leanLink.waitForExistence(timeout: 5), "The open card's lean block is not a button")
+        attach(app, "21-expanded-card")
+        leanLink.tap()
+        XCTAssertTrue(numbers.waitForExistence(timeout: 10), "The lean block did not open By the Numbers")
+        assertChartAtTop(app, "How precincts lean")
+        attach(app, "22-lean-chart")
+        app.buttons["Close"].firstMatch.tap()
+        XCTAssertTrue(waitForGone(numbers))
+
+        // A stat opens its own chart.
+        let income = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Median income'")).firstMatch
+        for _ in 0..<6 where !income.isHittable { app.swipeUp() }
+        XCTAssertTrue(income.isHittable, "Median income could not be reached")
+        income.tap()
+        XCTAssertTrue(numbers.waitForExistence(timeout: 10), "Median income did not open By the Numbers")
+        assertChartAtTop(app, "Median household income")
+        attach(app, "23-income-chart")
+    }
+
+    /// The chart heading sits near the top of By the Numbers, so the page scrolled to it.
+    private func assertChartAtTop(_ app: XCUIApplication, _ heading: String,
+                                  file: StaticString = #filePath, line: UInt = #line) {
+        let header = app.staticTexts[heading].firstMatch
+        XCTAssertTrue(header.waitForExistence(timeout: 5), "\(heading) is missing", file: file, line: line)
+        // The page scrolls twice: once at once, then again after the list lays out.
+        sleep(2)
+        XCTAssertTrue(header.isHittable, "\(heading) is not on screen", file: file, line: line)
+        XCTAssertLessThan(header.frame.minY, app.frame.height * 0.3,
+                          "By the Numbers did not scroll to \(heading): \(header.frame)", file: file, line: line)
+    }
+
+    private func waitForGone(_ element: XCUIElement, timeout: TimeInterval = 10) -> Bool {
+        XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)],
+                       timeout: timeout) == .completed
+    }
+
+    private func attach(_ app: XCUIApplication, _ name: String) {
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = name
+        shot.lifetime = .keepAlways
+        add(shot)
     }
 
     private func hero(in app: XCUIApplication) -> XCUIElement {

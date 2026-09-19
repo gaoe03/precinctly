@@ -4,7 +4,7 @@ import Foundation
 public enum FactCategory: String, CaseIterable, Sendable {
     case politics, race, wealth, education, population
 
-    /// Section header text (editorial/serif in the UI).
+    /// Section header text.
     public var title: String {
         switch self {
         case .politics:   return "Politics"
@@ -20,7 +20,7 @@ public enum FactCategory: String, CaseIterable, Sendable {
 public enum FactKind: Sendable {
     case leaderboard   // single superlative card
     case insight       // single card with an explanatory subtitle
-    case rangeLow      // low end of a min↔max pair (fused with its rangeHigh by pairKey)
+    case rangeLow      // low end of a min↔max pair (matched to its rangeHigh by pairKey)
     case rangeHigh     // high end of a min↔max pair
 }
 
@@ -37,7 +37,7 @@ public struct FunFact: Identifiable, Sendable {
     public let lon: Double?
     public let category: FactCategory
     public let kind: FactKind
-    public let pairKey: String?      // rangeLow + rangeHigh sharing a pairKey fuse into one RangeRow
+    public let pairKey: String?      // links a rangeLow and rangeHigh fact into one min/max pair
     public let subtitle: String?     // one-line explanation for .insight facts
     public let tieCount: Int?        // precincts sharing this exact displayed value (cap/ceiling ties); nil = unique
     public let leaderboard: LeaderboardSpec?   // present iff there's a crowd to drill into

@@ -11,9 +11,10 @@ import PrecinctKit
 
 struct BottomPanel: View {
     @EnvironmentObject var model: LocationModel
+    @State private var unitWhenNumbersOpened: String?
     @Binding var expanded: Bool
 
-    static let peekHeight: CGFloat = 190
+    static var peekHeight: CGFloat { 212}
     /// Peek grows at accessibility text sizes so the hero (including the low-vote caveat,
     /// the line the design exists to protect) stays visible instead of clipping at 190pt.
     static func peekHeight(for dts: DynamicTypeSize) -> CGFloat {
@@ -42,10 +43,14 @@ struct BottomPanel: View {
             let height = dragHeight ?? restH
             VStack(spacing: 0) {
                 handle(peekH: peekH, fullH: fullH)
+                    .zIndex(1)
                 // Reveal the full profile as soon as the card grows past peek (not only at the end
                 // of the drag), so expanding fills in continuously instead of staying blank then
                 // popping everything in at once.
                 ProfileContent(showContent: height > peekH + 2, scrolls: expanded)
+                    // The scroll view starts at the card's top edge and keeps the handle's height
+                    // as a margin, so text slides under the handle and the rounded edge.
+                    .modifier(UnderHandle(inset: 20, radius: Brand.sheetCorner, bottom: geo.safeAreaInsets.bottom))
                     // At peek the whole card (not just the handle) taps/drags to expand, matching
                     // how every system sheet behaves. A clear catcher (only present at peek, where
                     // the content is the non-interactive hero) keeps the ScrollView identity stable.
@@ -61,15 +66,16 @@ struct BottomPanel: View {
             }
             .frame(maxWidth: .infinity)
             .frame(height: height, alignment: .top)
+            .tourTarget(.card)
             .background {
-                // Material extended down through the home-indicator strip via negative padding
-                // (NOT ignoresSafeArea, which makes the greedy shape fill the whole screen) so the
-                // card sits flush to the bottom edge — no map showing underneath.
+                // Extended down through the home-indicator strip via negative padding (NOT
+                // ignoresSafeArea, which makes the greedy shape fill the whole screen) so the card
+                // sits flush to the bottom edge with no map showing underneath.
                 // Opaque, not material: the frosted panel live-blurred the map (tint polygons
                 // included) on every frame of a drag, which is what made resizing feel heavy
                 // in polygon-dense counties. A solid card costs nothing to move.
-                UnevenRoundedRectangle(topLeadingRadius: 26, topTrailingRadius: 26)
-                    .fill(Color(.systemBackground))
+                UnevenRoundedRectangle(topLeadingRadius: Brand.sheetCorner, topTrailingRadius: Brand.sheetCorner)
+                    .fill(Brand.surface)
                     .shadow(color: .black.opacity(0.12), radius: 10, y: -2)
                     .padding(.bottom, -geo.safeAreaInsets.bottom)
             }
@@ -97,6 +103,15 @@ struct BottomPanel: View {
         .sheet(isPresented: $model.showSearch) { SearchView().environmentObject(model) }
         .sheet(isPresented: $model.showSettings) { SettingsView() }
         .fullScreenCover(isPresented: $model.showFunFacts) { FunFactsView().environmentObject(model) }
+        .onChange(of: model.showFunFacts) {
+            // Picking a precinct inside By the Numbers lands in the small card, so the map shows
+            // where it is before the details.
+            if model.showFunFacts {
+                unitWhenNumbersOpened = model.selection?.unitID
+            } else if model.selection?.unitID != unitWhenNumbersOpened, model.selection != nil {
+                withAnimation(spring) { dragHeight = nil; expanded = false }
+            }
+        }
         .onChange(of: model.selection) {
             // Aggregate DMV navigation starts with no selected precinct. If the previous state
             // left this panel expanded, collapsing it here keeps the map and coverage selector
@@ -136,7 +151,7 @@ struct BottomPanel: View {
             .fill(.secondary.opacity(0.5))
             .frame(width: 40, height: 5)
             .frame(maxWidth: .infinity)
-            .frame(height: 28)
+            .frame(height: 20)
             .contentShape(Rectangle())
             .onTapGesture { snap(); withAnimation(spring) { expanded.toggle() } }
             .gesture(resizeDrag(peekH: peekH, fullH: fullH))
@@ -144,6 +159,22 @@ struct BottomPanel: View {
             .accessibilityLabel(expanded ? "Collapse panel" : "Expand panel")
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { withAnimation(spring) { expanded.toggle() } }
+    }
+}
+
+private struct UnderHandle: ViewModifier {
+    let inset: CGFloat
+    let radius: CGFloat
+    var bottom: CGFloat = 0
+    func body(content: Content) -> some View {
+        // Text slides under the handle and the rounded edge at the top, and under the home
+        // indicator at the bottom, instead of stopping at a hard edge.
+        content
+            .contentMargins(.top, inset, for: .scrollContent)
+            .contentMargins(.bottom, bottom + 12, for: .scrollContent)
+            .padding(.top, -inset)
+            .clipShape(UnevenRoundedRectangle(topLeadingRadius: radius, topTrailingRadius: radius))
+            .ignoresSafeArea(.container, edges: .bottom)
     }
 }
 
@@ -156,12 +187,39 @@ private struct ProfileContent: View {
     private var baseline: Baseline? { model.stateBaseline }
 
     var body: some View {
-        ScrollView {
-            content
+        ScrollViewReader { proxy in
+            ScrollView {
+                content.id("profileTop")
+                Color.clear.frame(height: 1).id("profileEnd")
+                #if DEBUG
+                // Screenshot capture only: SwiftUI's bottom anchor stops short by the top safe-area
+                // inset here, so pad by that much to land on the real end of the card.
+                if ProcessInfo.processInfo.arguments.contains("-scrollProfileEnd") { Color.clear.frame(height: 82) }
+                #endif
+            }
+            // At accessibility sizes the peek hero may still exceed even the taller peek,
+            // so let it scroll instead of clipping the caveat lines.
+            .scrollDisabled(!scrolls && !dts.isAccessibilitySize)
+            // Collapsing, or picking another precinct at peek, returns to the top. Otherwise the
+            // peek keeps the old offset and cuts the place name off.
+            .onChange(of: scrolls) { if !scrolls { proxy.scrollTo("profileTop", anchor: .top) } }
+            .onChange(of: model.selection?.unitID) { if !scrolls { proxy.scrollTo("profileTop", anchor: .top) } }
+            #if DEBUG
+            // Screenshot capture: the card opened at its end.
+            .defaultScrollAnchor(ProcessInfo.processInfo.arguments.contains("-scrollProfileEnd") ? .bottom : nil)
+            #endif
         }
-        // At accessibility sizes the peek hero may still exceed even the taller peek,
-        // so let it scroll instead of clipping the caveat lines.
-        .scrollDisabled(!scrolls && !dts.isAccessibilitySize)
+    }
+
+    /// Which election the card uses. A precinct that missed the latest one names the result
+    /// its chart does show.
+    private func footnote(_ p: PrecinctProfile) -> String {
+        let demographics = "Demographics use the 2020 Census and the American Community Survey."
+        if let y = p.leanYear { return "\(String(y)) presidential vote. " + demographics }
+        if let latest = model.presidentTrend.last(where: { $0.demShare != nil }) {
+            return "\(String(latest.year)) presidential vote, the latest available. " + demographics
+        }
+        return "Election data is unavailable for this precinct. " + demographics
     }
 
     @Environment(\.dynamicTypeSize) private var dts
@@ -180,10 +238,8 @@ private struct ProfileContent: View {
                         WhoLivesHere(profile: p)
                         MoneyEducation(profile: p, baseline: baseline)
                         MoreStats(profile: p)
-                        Text(p.leanYear.map { "\(String($0)) presidential vote. Demographics use the 2020 Census and ACS." }
-                             ?? "Election data is unavailable for this precinct. Demographics use the 2020 Census and ACS.")
-                            .font(.caption2).foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .center)
+                        Text(footnote(p))
+                            .brandNoteStyle()
                             .padding(.top, 8)
                             .padding(.bottom, 8)
                     }
@@ -194,46 +250,35 @@ private struct ProfileContent: View {
                     description: Text("The precinct database couldn't be opened. Try reinstalling."))
                     .padding(.top, 40)
             } else {
-                ContentUnavailableView("Tap the map", systemImage: "hand.tap",
-                    description: Text("Tap anywhere in \(stateName(model.selectedState)) to see that precinct's profile."))
-                    .padding(.top, 40)
+                // Left aligned like the hero it will become, and short enough for the peek.
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Tap a precinct").brandScaledDisplay(26, .bold)
+                    Text("Anywhere on the map in \(stateName(model.selectedState)).")
+                        .font(.bt(.subheadline)).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16).padding(.top, 22)
+            
             }
     }
 }
 
 // MARK: - Sheet section chrome
-//
-// The sheet used to stack four identical gray rounded cards, each with an SF Symbol glued to its
-// header. Four containers of equal weight say "these are four boxes", not "this is a reading".
-// A serif header over a ledger rule (the widget's and the share card's language) gives the same
-// grouping with none of the boxes, and lets the numbers be the loudest thing on screen.
-//
-// This sheet was the last user of `Card` and `SmallStat`, so both were removed from
-// BuildingBlocks rather than left behind as dead code. `BigStat` stays: By-the-Numbers still
-// uses it, and that screen keeps its own (non-serif) treatment.
 
+/// One card section: a `BrandSectionHeader` (a title with one rule under it) over its content.
 private struct SheetSection<Content: View, Accessory: View>: View {
     let title: String
+    var link: Metric? = nil
     @ViewBuilder var content: Content
     @ViewBuilder var accessory: Accessory
+    @EnvironmentObject var model: LocationModel
     @Environment(\.dynamicTypeSize) private var dts
     var body: some View {
+        // Only the header links to By the Numbers. Wrapping the whole section in a button would
+        // merge the comparison menu and the info button into it for VoiceOver.
         VStack(alignment: .leading, spacing: 9) {
-            // Side by side normally. At accessibility sizes a serif header and a "vs Queens"
-            // menu cannot share one line without the header wrapping mid-phrase, so the
-            // accessory drops to its own row instead.
-            if dts.isAccessibilitySize {
-                Text(title).font(.serifDisplay(17, .semibold))
-                accessory
-            } else {
-                HStack(spacing: 8) {
-                    Text(title)
-                        .font(.serifDisplay(17, .semibold))
-                    Spacer(minLength: 4)
-                    accessory
-                }
-            }
-            Rectangle().fill(.secondary.opacity(0.28)).frame(height: 1)
+            BrandSectionHeader(title: title, stacked: dts.isAccessibilitySize,
+                               onTap: link.map { metric in { model.numbersFocus = metric; model.showFunFacts = true } }) { accessory }
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -242,8 +287,8 @@ private struct SheetSection<Content: View, Accessory: View>: View {
 }
 
 extension SheetSection where Accessory == EmptyView {
-    init(title: String, @ViewBuilder content: () -> Content) {
-        self.init(title: title, content: content, accessory: { EmptyView() })
+    init(title: String, link: Metric? = nil, @ViewBuilder content: () -> Content) {
+        self.init(title: title, link: link, content: content, accessory: { EmptyView() })
     }
 }
 
@@ -252,6 +297,21 @@ extension SheetSection where Accessory == EmptyView {
 private struct ComparisonMenu: View {
     @EnvironmentObject var model: LocationModel
     let current: Baseline
+
+    static func menuLabel(_ scope: String) -> (String, String) {
+        let parts = scope.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+        switch parts.first {
+        case "county" where parts.count == 3:
+            let boroughs: Set<String> = ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"]
+            let kind = boroughs.contains(parts[2]) ? "Borough"
+                : parts[2] == "District of Columbia" ? "District"
+                : parts[2].hasSuffix(" City") ? "City" : "County"
+            return (countyDisplay(parts[2]), kind)
+        case "metro" where parts.count == 3: return (parts[2], "City")
+        case "region": return ("DMV (DC, MD, VA)", "Region")
+        default: return (stateName(scope), "State")
+        }
+    }
 
     var body: some View {
         Menu {
@@ -262,67 +322,114 @@ private struct ComparisonMenu: View {
                     else { return }
                     model.comparisonPreference = choice
                 } label: {
+                    // Full name with its kind under it, always ordered county, city or region,
+                    // then state, so "Manhattan / NYC / NY" reads as one clear ladder.
+                    let (name, kind) = Self.menuLabel(area.scope)
                     if area.scope == current.scope {
-                        Label(area.displayName, systemImage: "checkmark")
+                        Label { Text(name); Text(kind) } icon: { Image(systemName: "checkmark") }
                     } else {
-                        Text(area.displayName)
+                        Text(name); Text(kind)
                     }
                 }
             }
         } label: {
             HStack(spacing: 3) {
-                Text("vs \(current.displayName)")
-                Image(systemName: "chevron.down").font(.caption2)
+                Text("vs \(current.readerName)")
+                Image(systemName: "chevron.down").font(.bt(.caption2))
             }
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-            // Same lesson as the By-the-Numbers chip: hold the width, let the neighbour give.
-            // "vs San Bernardino" is a long label sitting next to a serif header.
+            .font(.bt(.caption, .semibold))
+            .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+            // An explicit color: .secondary inside a Menu label is dimmed a second time and read
+            // as disabled in dark mode.
+            .foregroundStyle(Color(uiColor: .secondaryLabel))
+            // Hold the width and let the header give way. "vs San Bernardino" is a long label.
             .lineLimit(1)
             .fixedSize()
             .padding(.horizontal, 9).padding(.vertical, 4)
-            .background(Color(.tertiarySystemFill), in: Capsule())
+            .background(Color(.tertiarySystemFill), in: Brand.chipShape)
         }
-        .accessibilityLabel("Compare against, currently \(current.displayName)")
+        .accessibilityLabel("Compare against, currently \(current.readerName)")
     }
 }
 
-/// Sheet-local stat views, serif-faced: the app's own convention is serif for display numbers,
-/// and until now only the lean hero honoured it.
+/// Makes a stat open By the Numbers on the same measure, with this precinct marked. The chevron
+/// beside the label says it can be tapped.
+private struct NumbersLink<Content: View>: View {
+    @EnvironmentObject var model: LocationModel
+    let metric: Metric?
+    @ViewBuilder var content: Content
+    var body: some View {
+        if let metric {
+            Button {
+                model.numbersFocus = metric
+                model.showFunFacts = true
+            } label: { content.contentShape(Rectangle()) }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens By the Numbers")
+        } else {
+            content
+        }
+    }
+}
+
+/// A stat's label. No chevron: the whole stat is the link, and the section header's chevron is
+/// the one cue that the numbers open By the Numbers.
+private func statLabel(_ text: String, linked: Bool) -> Text {
+    Text(text)
+}
+
 private struct SheetBigStat: View {
     let value: String
     let label: String
+    /// Lets the figure run into an empty neighboring grid column instead of shrinking.
+    var overflow = false
     let delta: (String, Bool)?
+    var metric: Metric? = nil
     var body: some View {
+        NumbersLink(metric: metric) { inner }
+    }
+    private var inner: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(value)
-                .font(.serifDisplay(26, .semibold)).monospacedDigit()
+                .brandScaledFigure(26, .semibold).monospacedDigit()
                 .contentTransition(.numericText())
-                .lineLimit(1).minimumScaleFactor(0.7)
-            Text(label).font(.caption).foregroundStyle(.secondary)
-            if let delta {
-                Text(delta.0).font(.caption2.bold())
-                    .foregroundStyle(delta.1 ? .green : .orange)
-                    .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(1).minimumScaleFactor(overflow ? 1 : 0.7)
+                .fixedSize(horizontal: overflow, vertical: false)
+            // Labels and deltas stop growing before the figure does, so the number stays loudest.
+            Group {
+                statLabel(label, linked: metric != nil).font(.bt(.caption)).foregroundStyle(.secondary)
+                if let delta {
+                    Text(delta.0).font(.bt(.caption2, .bold))
+                        .foregroundStyle(delta.1 ? Brand.deltaUp : Brand.deltaDown)
+                }
             }
+            .dynamicTypeSize(...DynamicTypeSize.accessibility1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        // One element per stat, like the race rows and the hero. VoiceOver reads it in one pass.
+        .accessibilityElement(children: .combine)
     }
 }
 
 private struct SheetSmallStat: View {
     let title: String
     let value: String?
-    init(_ title: String, _ value: String?) { self.title = title; self.value = value }
+    let metric: Metric?
+    init(_ title: String, _ value: String?, metric: Metric? = nil) { self.title = title; self.value = value; self.metric = metric }
     var body: some View {
+        NumbersLink(metric: metric) { inner }
+    }
+    private var inner: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(value ?? "—")
-                .font(.serifDisplay(19, .semibold)).monospacedDigit()
+                .brandScaledFigure(19, .semibold).monospacedDigit()
                 .contentTransition(.numericText())
                 .lineLimit(1).minimumScaleFactor(0.7)
-            Text(title).font(.caption2).foregroundStyle(.secondary)
+            statLabel(title, linked: metric != nil).font(.bt(.caption2)).foregroundStyle(.secondary)
+                .dynamicTypeSize(...DynamicTypeSize.accessibility1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -336,8 +443,8 @@ private struct LeanHero: View {
     private var color: Color { Palette.lean(profile.leanDemShare) }
     private var labelText: String? { profile.leanLabel }
     private var localityText: String {
-        "\(countyDisplay(profile.borough)), \(profile.state)"
-            + (profile.precinctName.map { " (\(precinctDisplayName($0)))" } ?? "")
+        // "Precinct 1322, Queens, NY", the same name the share card and widget use.
+        "\(precinctHeadline(profile)), \(precinctArea(profile))"
     }
     private var localityLineLimit: Int? {
         if !showsShareButton { return 1 }
@@ -354,27 +461,26 @@ private struct LeanHero: View {
             if let votes = profile.leanVotes, votes < 100 {
                 parts.append("Based on only \(votes) vote\(votes == 1 ? "" : "s") cast")
             }
-            if let turnout = profile.turnoutEst, turnout <= 1.05 {
-                parts.append("\(Fmt.pct(min(turnout, 1))) turnout"
-                             + (profile.leanYear.map { " in \($0)" } ?? "")
-                             + (profile.leanVotes.flatMap { $0 >= 100 ? " from \(Fmt.compact($0)) votes" : nil } ?? ""))
+            if let line = votesLine(profile, compact: Fmt.compact, showVotes: (profile.leanVotes ?? 0) >= 100) {
+                parts.append(line)
             }
         }
         return parts.joined(separator: ". ")
     }
     var body: some View {
-        VStack(spacing: 5) {
+        VStack(alignment: .leading, spacing: 5) {
             Text(localityText)
-                .font(.subheadline).foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+                .font(.bt(.subheadline)).foregroundStyle(.secondary)
+                .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+                .multilineTextAlignment(.leading)
                 .lineLimit(localityLineLimit)
                 .minimumScaleFactor(showsShareButton ? 1 : 0.8)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityIdentifier("Profile locality")
-                // Reserve the button's width on both sides so the locality remains centered and
-                // can never render underneath it. At peek there is no button and no reservation.
-                .padding(.horizontal, showsShareButton ? 44 : 0)
+                // Reserve the share button's width so the locality can never render underneath
+                // it. At peek there is no button and no reservation.
+                .padding(.trailing, showsShareButton ? 44 : 0)
                 .overlay(alignment: .topTrailing) {
                     // This overlay belongs to the ScrollView, so it follows the hero instead of
                     // floating above it. It deliberately does not make the collapsed row taller.
@@ -384,14 +490,30 @@ private struct LeanHero: View {
                     }
                 }
 
-            VStack(spacing: 5) {
+            // Open card: the whole lean block opens the lean chart, the same way every number on
+            // the card opens its chart. At peek a tap expands the card instead.
+            NumbersLink(metric: showsShareButton && profile.leanDemShare != nil ? .lean : nil) {
+            VStack(alignment: .leading, spacing: 5) {
+                if profile.leanDemShare == nil {
+                    // A precinct can miss the latest election but still have earlier results.
+                    // Saying "No election data" above a chart of results contradicted itself.
+                    let latest = model.presidentTrend.last(where: { $0.demShare != nil })
+                    Text(latest.map { $0.year < 2024 ? "No 2024 result" : "No election data" } ?? "No election data")
+                        .brandScaledDisplay(30, .heavy).foregroundStyle(.secondary)
+                    if let e = latest, let s = e.demShare {
+                        Text("Latest result \(Metric.lean.format(s)) in \(String(e.year))")
+                            .font(.bt(.subheadline, .semibold)).foregroundStyle(Palette.lean(s))
+                    }
+                } else {
                 Text(profile.leanShort)
-                    .font(.serifDisplay(38, .heavy))
+                    .brandScaledDisplay(Brand.heroSize, .heavy)
                     .foregroundStyle(color).contentTransition(.numericText())
+                }
                 if let labelText {
                     Text(labelText + (profile.leanYear.map { " in \($0)" } ?? ""))
-                        .font(.subheadline.weight(.semibold)).foregroundStyle(color)
-                        .multilineTextAlignment(.center)
+                        .font(.bt(.subheadline, .semibold)).foregroundStyle(Palette.lean(profile.leanDemShare))
+                        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+                        .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let s = profile.leanDemShare {
@@ -401,43 +523,47 @@ private struct LeanHero: View {
                         Spacer()
                         Text("\(Fmt.pct(1 - s)) Rep").foregroundStyle(Palette.rep)
                     }
-                    .font(.caption)
+                    .font(.bt(.caption))
+                    .dynamicTypeSize(...DynamicTypeSize.accessibility1)
                     // A precinct with a handful of ballots can read R+100; say so instead of
                     // letting the giant number stand alone. (100 matches By-the-Numbers' floor.)
                     if let v = profile.leanVotes, v < 100 {
                         Text("Based on only \(v) vote\(v == 1 ? "" : "s") cast")
-                            .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                            .font(.bt(.caption2, .semibold)).foregroundStyle(.secondary)
                     }
-                    if let t = profile.turnoutEst, t <= 1.05 {
-                        // "Votes cast" used to be an orphan tile down in the stat grid. Turnout is
-                        // the number it qualifies, so they read as one line.
-                        Text("\(Fmt.pct(min(t, 1))) turnout"
-                             + (profile.leanYear.map { " in \($0)" } ?? "")
-                             + (profile.leanVotes.flatMap { $0 >= 100 ? " from \(Fmt.compact($0)) votes" : nil } ?? ""))
-                            .font(.caption2).foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            // Now that this line carries the vote count too it can outrun one line at
-                            // large text sizes; wrap rather than truncate the number away.
+                    // The vote count and the share of eligible adults, as one line. California has no
+                    // turnout, so it shows the vote count alone.
+                    if let line = votesLine(profile, compact: Fmt.compact, showVotes: (profile.leanVotes ?? 0) >= 100) {
+                        Text(line)
+                            .font(.bt(.caption2)).foregroundStyle(.secondary)
+                            .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+                            .multilineTextAlignment(.leading)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel(leanAccessibilityText)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 2)
     }
 }
 
-// MARK: - 1b) Presidential trajectory (replaces the terse "since '20" line)
+// MARK: - 1b) Presidential trajectory
 
 private struct TrajectoryBox: View {
     let trend: [ElectionResult]   // president, sorted by year, demShare non-nil
 
     var body: some View {
-        SheetSection(title: "Presidential trajectory") {
+        SheetSection(title: "Politics", link: .shift) {
             VStack(spacing: 4) {
+                Text("Presidential margin by year").font(.bt(.headline, .bold))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            
                 GeometryReader { geo in
                     let w = geo.size.width, h = geo.size.height
                     // 30pt reserved under the bars: a deep-R bar bottoms out at `bottom`, its
@@ -449,7 +575,7 @@ private struct TrajectoryBox: View {
                     let inset: CGFloat = 6
                     let slot = (w - inset * 2) / CGFloat(n)
                     let px: (Int) -> CGFloat = { i in inset + slot * (CGFloat(i) + 0.5) }
-                    let barW = min(40, slot * 0.55)
+                    let barW = min(Brand.chartWidth, slot * 0.6)
                     // Scale to the actual data range so real swings fill the height, while keeping the
                     // "even" (50/50) baseline on-screen as a reference — clamped to an edge for precincts
                     // that never cross it, so the bars grow tall instead of clustering at mid-height.
@@ -461,8 +587,8 @@ private struct TrajectoryBox: View {
                     ZStack {
                         ForEach(Array(trend.enumerated()), id: \.offset) { i, e in
                             let s = e.demShare ?? 0.5
-                            let yEven = py(0.5), yVal = py(s), up = s >= 0.5
-                            UnevenRoundedRectangle(topLeadingRadius: up ? 4 : 0, bottomLeadingRadius: up ? 0 : 4, bottomTrailingRadius: up ? 0 : 4, topTrailingRadius: up ? 4 : 0)
+                            let yEven = py(0.5), yVal = py(s)
+                            Rectangle()
                                 .fill(Palette.lean(s))
                                 .frame(width: barW, height: max(2, abs(yVal - yEven)))
                                 .position(x: px(i), y: (yEven + yVal) / 2)
@@ -478,14 +604,15 @@ private struct TrajectoryBox: View {
                         ForEach(Array(trend.enumerated()), id: \.offset) { i, e in
                             let s = e.demShare ?? 0.5
                             let yVal = py(s)
-                            Text(margin(s)).font(.caption2.weight(.bold)).foregroundStyle(Palette.lean(s))
+                            Text(margin(s)).font(.bt(.caption2, .bold)).foregroundStyle(Palette.lean(s))
                                 .position(x: px(i), y: s >= 0.5 ? max(8, yVal - 10) : min(yVal + 10, h - 22))
-                            Text(String(e.year)).font(.caption2).foregroundStyle(.secondary)
+                            Text(String(e.year)).font(.bt(.caption2)).foregroundStyle(.secondary)
                                 .position(x: px(i), y: h - 6)
                         }
                     }
                 }
                 .frame(height: 100)
+                .padding(.bottom, 3)
                 // The chart is a fixed-height graphic with hand-positioned labels: let its
                 // captions scale to accessibility sizes and the year row and margin labels
                 // collide into each other. Clamped here only, and the chart already exposes the
@@ -514,44 +641,41 @@ private struct WhoLivesHere: View {
         profile.raceBreakdown.filter { $0.value >= 0.02 }
     }
     var body: some View {
-        SheetSection(title: "Who lives here") {
+        SheetSection(title: "Who lives here", link: .largestGroup) {
             if rows.isEmpty {
                 Text("No demographic data for this precinct.")
-                    .font(.subheadline).foregroundStyle(.secondary)
+                    .font(.bt(.subheadline)).foregroundStyle(.secondary)
             } else {
-                if let p = profile.pluralityGroup {
-                    Text("Largest group: **\(p)**").font(.subheadline)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
                 VStack(spacing: 7) {
                     ForEach(Array(rows.enumerated()), id: \.element.label) { idx, item in
                         HStack(spacing: 10) {
-                            Text(item.label).font(.subheadline)
+                            Text(item.label).font(.bt(.subheadline, .medium))
                                 // The fixed column widths are what keep the bars aligned row to
                                 // row. At accessibility sizes they clip names to "Hisp…", so the
                                 // bar (decoration) gives way and the words get the whole row.
-                                .frame(width: dts.isAccessibilitySize ? nil : 86, alignment: .leading)
-                                .lineLimit(dts.isAccessibilitySize ? 2 : 1).minimumScaleFactor(0.8)
-                            // Flat bars on bare paper, not capsules in a trough: a rounded pill on
-                            // a grey track is the shape of a download progress bar, and these are
-                            // measurements. The rows share a left edge, so the track was only ever
-                            // drawing a 100% reference nobody reads, louder than the small bars.
+                                // No per-row shrinking: every name renders at one size.
+                                .frame(width: dts.isAccessibilitySize ? nil : (104), alignment: .leading)
+                                .lineLimit(dts.isAccessibilitySize ? 2 : 1).minimumScaleFactor(1)
+                            // Flat bars with no track: a rounded pill on a gray track reads as a
+                            // progress bar, and these are measurements.
                             if !dts.isAccessibilitySize {
                                 GeometryReader { geo in
                                     Rectangle().fill(Palette.rankTint(idx))
                                         .frame(width: max(3, geo.size.width * min(1, item.value)))
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                 }
-                                .frame(height: 7)
+                                .frame(height: 10)
                                 .accessibilityHidden(true)
                             } else {
                                 Spacer(minLength: 4)
                             }
-                            Text(Fmt.pct(item.value)).font(.subheadline.weight(.semibold).monospacedDigit())
+                            Text(Fmt.pct(item.value)).font(.bt(.subheadline, .semibold).monospacedDigit())
                                 .frame(width: dts.isAccessibilitySize ? nil : 46, alignment: .trailing)
                                 .lineLimit(1).minimumScaleFactor(0.8)
                         }
+                        // Rows stop growing where the section header does, so a header is never
+                        // smaller than the rows under it.
+                        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
                         .accessibilityElement(children: .combine)
                         .accessibilityLabel("\(item.label), \(Fmt.pct(item.value))")
                     }
@@ -562,7 +686,7 @@ private struct WhoLivesHere: View {
                         Image(systemName: "info.circle")
                         Text("Why can shares total over 100%?")
                     }
-                    .font(.caption2).foregroundStyle(.secondary)
+                    .font(.bt(.caption2)).foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
                 .alert("Race & ethnicity", isPresented: $showInfo) {
@@ -587,19 +711,30 @@ private struct MoneyEducation: View {
         // Every label comes from the RESOLVED baseline, never from the preference, so a reader
         // who picked "county" and landed in a 4-precinct Texas county sees "vs TX" and the
         // number describes itself correctly instead of lying about what it measured.
-        SheetSection(title: "Money and education") {
-            let layout = dts.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
-                : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
-            layout {
-                // ACS income is top-coded at the 250001 sentinel. By-the-Numbers and the share
-                // card already showed that honestly as "$250k+"; this screen was still printing
-                // the raw sentinel as "$250,001".
+        SheetSection(title: "Money and education", link: .income) {
+            // ACS income is top-coded at the 250001 sentinel. By-the-Numbers and the share
+            // card already showed that honestly as "$250k+"; this screen was still printing
+            // the raw sentinel as "$250,001".
+            let stats = Group {
                 SheetBigStat(value: profile.incomeMedian.map { Fmt.incomeTopCoded($0) } ?? "—",
-                             label: "Median income",
-                             delta: Delta.money(profile.incomeMedian, baseline?.incomeMedian, baseline?.displayName ?? profile.state))
+                             label: "Median income", overflow: true,
+                             delta: Delta.money(profile.incomeMedian, baseline?.incomeMedian, ""),
+                             metric: .income)
+                // Column two stays empty so a six-digit income has room and College lines up
+                // with the third column (Density) below.
+                if !dts.isAccessibilitySize { Color.clear.frame(height: 0) }
                 SheetBigStat(value: profile.pctBachelorsOrHigher.map { Fmt.pct($0) } ?? "—",
                              label: "College degree",
-                             delta: Delta.points(profile.pctBachelorsOrHigher, baseline?.pctBachelorsOrHigher, baseline?.displayName ?? profile.state))
+                             delta: Delta.points(profile.pctBachelorsOrHigher, baseline?.pctBachelorsOrHigher, ""),
+                             metric: .college)
+            }
+            // The same three columns as People and housing, so column two lines up down the card.
+            // One column at accessibility sizes, laid out eagerly (see StatColumn).
+            if dts.isAccessibilitySize {
+                StatColumn { stats }
+            } else {
+                let cols = Array(repeating: GridItem(.flexible(), alignment: .topLeading), count: 3)
+                LazyVGrid(columns: cols, alignment: .leading, spacing: 16) { stats }
             }
         } accessory: {
             if let baseline, model.comparisonAreas.count > 1 {
@@ -610,24 +745,36 @@ private struct MoneyEducation: View {
 }
 
 // MARK: - 4) People and housing
-//
-// Was "Everything else", which is a section admitting it never decided what it holds. Every
-// reading here is about who lives in the precinct and how they're housed; "Votes cast" was the
-// one that didn't fit, and it now sits with turnout up in the hero where it belongs.
 
 private struct MoreStats: View {
     @Environment(\.dynamicTypeSize) private var dts
     let profile: PrecinctProfile
     var body: some View {
-        SheetSection(title: "People and housing") {
-            let cols = Array(repeating: GridItem(.flexible()), count: dts.isAccessibilitySize ? 1 : 3)
-            LazyVGrid(columns: cols, spacing: 16) {
+        SheetSection(title: "People and housing", link: .age) {
+            let stats = Group {
                 SheetSmallStat("Population", profile.popTotal.map { Fmt.compact($0) })
-                SheetSmallStat("Median age", profile.avgAge.map { String(Int($0.rounded())) })
-                SheetSmallStat("Density", profile.popDensity.map { "\(Fmt.compact(Int($0)))/mi²" })
-                SheetSmallStat("Renters", profile.pctRenter.map { Fmt.pct($0) })
-                SheetSmallStat("Owners", profile.pctOwner.map { Fmt.pct($0) })
+                SheetSmallStat("Median age", profile.avgAge.map { String(Int($0.rounded())) }, metric: .age)
+                SheetSmallStat("Density", profile.popDensity.map { "\(Metric.density.format($0))/mi²" }, metric: .density)
+                SheetSmallStat("Renters", profile.pctRenter.map { Fmt.pct($0) }, metric: .renters)
+                SheetSmallStat("Owners", profile.pctOwner.map { Fmt.pct($0) }, metric: .renters)
+            }
+            if dts.isAccessibilitySize {
+                StatColumn { stats }
+            } else {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 16) { stats }
             }
         }
     }
 }
+
+/// The card's stats as one column at accessibility sizes. A plain stack, not a one-column lazy
+/// grid: with the lazy grid, the text clipping audit flagged the stat labels after a fast scroll,
+/// though the text was drawn in full. With this stack it did not.
+private struct StatColumn<Content: View>: View {
+    @ViewBuilder var content: Content
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) { content }
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+

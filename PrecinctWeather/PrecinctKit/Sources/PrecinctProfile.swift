@@ -6,7 +6,7 @@ public enum Coverage {
     /// Abbreviated list for tight surfaces (toasts, widgets).
     public static let abbrList = "NY, CA, CO, MA, OR, TX, and DMV (DC, MD, VA)"
     /// Full-name sentence for calm surfaces (onboarding, Settings).
-    public static let namesSentence = "Precinctly covers New York, California, Colorado, Massachusetts, Oregon, Texas, and the DMV (Washington, DC, Montgomery and Prince George's Counties, and Northern Virginia)."
+    public static let namesSentence = "Precinctly covers New York, California, Colorado, Massachusetts, Oregon, Texas, and the DMV (Washington, DC, Montgomery and Prince George's Counties, and Northern Virginia)."
 }
 
 /// A map/data coverage area. Most areas are backed by one state column in the
@@ -92,6 +92,24 @@ public func precinctDisplayName(_ raw: String) -> String {
     return stripped.isEmpty ? "0" : String(stripped)
 }
 
+/// The precinct part of a place label, after the area already names the county: "Weld 319"
+/// reads "319", "Prince George's Precinct 01-001" reads "01-001" and DC's "Precinct 001" reads
+/// "1". Real names such as "Barnstable Town Precinct 13" pass through.
+public func shortPrecinctName(_ raw: String, borough: String) -> String {
+    var n = raw
+    if n.hasPrefix(borough + " ") {
+        let rest = String(n.dropFirst(borough.count + 1))
+        if rest.first?.isNumber == true || rest.hasPrefix("Precinct ") { n = rest }
+    }
+    if n.hasPrefix("Precinct ") { n = String(n.dropFirst(9)) }
+    return precinctDisplayName(n)
+}
+
+/// The area part of a place label. DC reads "Washington, DC" rather than "District of Columbia".
+public func areaDisplay(_ borough: String) -> String {
+    borough == "District of Columbia" ? "Washington, DC" : countyDisplay(borough)
+}
+
 /// Standalone precinct title: bare numeric ids read "Precinct 56"; real names pass through.
 public func precinctTitleDisplay(_ name: String) -> String {
     guard !name.isEmpty, name.allSatisfy(\.isNumber) else { return name }
@@ -102,11 +120,38 @@ public func precinctTitleDisplay(_ name: String) -> String {
 /// CA id like "1290023A" would otherwise read as a naked serial. The rule: one bare token that
 /// starts with a digit is a precinct number, not a name.
 public func precinctHeadline(_ p: PrecinctProfile) -> String {
-    guard let raw = p.precinctName, !raw.isEmpty else { return "Precinct" }
-    let n = precinctTitleDisplay(raw)
+    precinctTitle(p.precinctName, borough: p.borough)
+}
+
+/// The one way the app names a precinct, on the card, the share card, the widget, rankings and
+/// sentences. The id loses its county prefix and padding first, since the area line names the
+/// county: "Weld 319" reads "Precinct 319" and DC's "Precinct 001" reads "Precinct 1".
+public func precinctTitle(_ raw: String?, borough: String) -> String {
+    guard let raw, !raw.isEmpty else { return "Precinct" }
+    let n = shortPrecinctName(raw, borough: borough)
     if n.localizedCaseInsensitiveContains("precinct") { return n }
     if let f = n.first, f.isNumber, !n.contains(" ") { return "Precinct \(n)" }
     return n
+}
+
+/// The line under the vote bar, the same on the card, the share card and the widget:
+/// "388 votes, 26% of eligible adults". The year is already in the label above it. Turnout
+/// above 105% is left out (the Census base is too low), and a result under 100 votes keeps its
+/// own "Based on only" warning, so it passes `showVotes: false`.
+public func votesLine(_ p: PrecinctProfile, compact: (Int) -> String, showVotes: Bool = true) -> String? {
+    let votes = showVotes ? p.leanVotes.map(compact) : nil
+    let share = p.turnoutEst.flatMap { $0 <= 1.05 ? "\(Int((min($0, 1) * 100).rounded()))%" : nil }
+    switch (votes, share) {
+    case let (v?, s?): return "\(v) votes, \(s) of eligible adults"
+    case let (nil, s?): return "\(s) of eligible adults voted"
+    case let (v?, nil): return "\(v) votes"
+    default: return nil
+    }
+}
+
+/// The area line under a precinct's name: "Queens, NY", "Washington, DC".
+public func precinctArea(_ p: PrecinctProfile) -> String {
+    p.state == "DC" ? "Washington, DC" : "\(countyDisplay(p.borough)), \(p.state)"
 }
 
 /// The `borough` column holds a bare county name everywhere except NYC, where it's a borough
@@ -178,7 +223,9 @@ public struct PrecinctProfile: Codable, Equatable, Sendable {
                 avgAge: Double?, pctRenter: Double?, pctOwner: Double?, dataComplete: Bool) {
         self.unitID = unitID; self.borough = borough; self.state = state
         self.precinctName = precinctName
-        self.leanLabel = leanLabel; self.leanDemShare = leanDemShare
+        // The group follows the printed margin, so a precinct shown as D+10 is Lean Dem everywhere,
+        // the same as its By the Numbers bar. The stored label uses raw-share cut points.
+        self.leanLabel = leanDemShare.map { leanGroupLabel(forMargin: printedMargin(share: $0)) } ?? leanLabel; self.leanDemShare = leanDemShare
         self.prevDemShare = prevDemShare; self.leanYear = leanYear; self.prevYear = prevYear
         self.leanShift = leanShift; self.leanVotes = leanVotes; self.turnoutEst = turnoutEst
         self.popTotal = popTotal; self.vapTotal = vapTotal; self.cvap = cvap

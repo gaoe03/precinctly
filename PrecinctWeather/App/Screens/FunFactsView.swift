@@ -1,58 +1,53 @@
 import SwiftUI
 import PrecinctKit
 
-// MARK: - By the Numbers (dataset superlatives)
+// MARK: - By the Numbers
 //
-// A native inset-grouped List. Each category is a Section; min/max pairs that share a `pairKey`
-// (lean, shift, edu, age, income) fuse into one RangeRow showing both endpoints; tenure (where
-// every winner ties at 100%) becomes a count row that drills into a directory, not a ranked list.
-// Standing caveats live behind the nav-bar info button, not inline on every card.
+// A plain list: the area title (tap it to pick a county), a four-stat overview, then a chart for
+// every measure (`NumbersCombined`). Standing caveats live behind the info button.
 
 struct FunFactsView: View {
     @EnvironmentObject var model: LocationModel
     @Environment(\.dynamicTypeSize) private var dts
-    @State private var facts: [FunFact] = []
     @State private var overview: ScopeOverview?
     @State private var counties: [String] = []
     @State private var county: String?
     @State private var loading = false
-    @State private var leaderboard: LeaderboardSpec?   // pushed drill-in list, if any
     @State private var showAbout = false
     @State private var showCountyPicker = false
+    @State private var detail: NumbersDetailSpec?
+    @State private var focusTarget: String?
     // Cache by scope so re-opening a county (or flipping back to "All") is instant.
-    @State private var cache: [String: (facts: [FunFact], overview: ScopeOverview?)] = [:]
+    @State private var cache: [String: ScopeOverview] = [:]
 
     private var scopeKey: String { "\(model.selectedState)|\(county ?? "")" }
+    private var scopeName: String { county.map { countyDisplay($0) } ?? stateName(model.selectedState) }
 
-    /// Load the current scope's superlatives. Cached scopes return instantly; uncached ones
-    /// paint the page first (a quick yield) and then run the ~25 queries, so the open never freezes.
+    /// Load the current scope's overview. Cached scopes return instantly. The charts below load
+    /// their own distributions.
     private func load() async {
         let key = scopeKey, state = model.selectedState, c = county
-        if let hit = cache[key] { facts = hit.facts; overview = hit.overview; loading = false; return }
-        facts = []; overview = nil; loading = true
+        if let hit = cache[key] { overview = hit; loading = false; return }
+        overview = nil; loading = true
         await Task.yield()                            // let the page (menu + spinner) paint first
         guard scopeKey == key else { return }
+        let o: ScopeOverview
         if let region = coverageRegion(state), region.isAggregate {
-            let o = PrecinctDB.shared.scopeOverview(region: region)
-            let f = PrecinctDB.shared.funFacts(region: region)
-            guard scopeKey == key else { return }
-            facts = f; overview = o; loading = false
-            cache[key] = (f, o)
-            return
+            o = PrecinctDB.shared.scopeOverview(region: region)
+        } else {
+            o = PrecinctDB.shared.scopeOverview(state: state, county: c)
         }
-        let f = PrecinctDB.shared.funFacts(state: state, county: c)
-        await Task.yield()
         guard scopeKey == key else { return }
-        let o = PrecinctDB.shared.scopeOverview(state: state, county: c)
-        guard scopeKey == key else { return }
-        facts = f; overview = o; loading = false
-        cache[key] = (f, o)
+        overview = o; loading = false
+        cache[key] = o
     }
 
     var body: some View {
         NavigationStack {
+            ScrollViewReader { proxy in
             List {
                 Section { scopeRow }
+                    .listSectionSeparator(.hidden).listRowSeparator(.hidden)
 
                 if loading && overview == nil {
                     ProgressView().frame(maxWidth: .infinity).padding(.vertical, 40)
@@ -62,47 +57,48 @@ struct FunFactsView: View {
                 if let overview {
                     Section {
                         OverviewGrid(overview: overview)
-                        if !overview.leanBuckets.isEmpty { LeanBar(buckets: overview.leanBuckets) }
+                            .listRowSeparator(.hidden)
                     }
-                }
-
-                ForEach(FactCategory.allCases, id: \.self) { cat in
-                    let items = funFactRowItems(facts.filter { $0.category == cat })
-                    if !items.isEmpty {
-                        Section {
-                            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                                VStack(spacing: 0) {
-                                    rowView(item)
-                                    if index < items.count - 1 {
-                                        Divider().padding(.top, 6)
-                                    }
-                                }
-                                .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
-                                .listRowSeparator(.hidden)
-                            }
-                        } header: {
-                            Text(cat.title)
-                                .font(.serifDisplay(15, .semibold)).foregroundStyle(.primary).textCase(nil)
-                        }
-                    }
-                }
-
-                if facts.isEmpty && !loading && overview == nil {
-                    Text("No ranked precincts in this area.")
-                        .font(.subheadline).foregroundStyle(.secondary)
+                    .listSectionSeparator(.hidden)
+                    NumbersCombined(county: county, scopeName: scopeName)
+                } else if !loading {
+                    Text("No precincts in this area.")
+                        .font(.bt(.subheadline)).foregroundStyle(.secondary)
                         .listRowBackground(Color.clear)
                 }
 
                 Section {
-                    Text("Presidential results use each precinct's latest available election. Demographics use the 2020 Census and ACS.")
-                        .font(.caption2).foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
+                    Text("Presidential results use each precinct's latest available election. Demographics use the 2020 Census and the American Community Survey.")
+                        .brandNoteStyle()
                         .listRowBackground(Color.clear).listRowSeparator(.hidden)
                 }
             }
-            .listStyle(.insetGrouped)
-            .navigationDestination(item: $leaderboard) { spec in
-                PrecinctLeaderboard(spec: spec).environmentObject(model)
+            .onChange(of: focusTarget) {
+                guard let target = focusTarget else { return }
+                // A List only estimates the position of rows it has not laid out yet, so the first
+                // jump can land short. A second pass after layout settles lands exactly.
+                withAnimation(.easeInOut(duration: 0.35)) { proxy.scrollTo(target, anchor: .top) }
+                Task {
+                    try? await Task.sleep(nanoseconds: 450_000_000)
+                    withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(target, anchor: .top) }
+                }
+            }
+            #if DEBUG
+            .task(id: overview == nil) {
+                // Screenshot capture: scroll straight to one chart.
+                guard let target = UserDefaults.standard.string(forKey: "numbersScroll"), overview != nil else { return }
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                proxy.scrollTo(target, anchor: .top)
+                try? await Task.sleep(nanoseconds: 600_000_000)
+                proxy.scrollTo(target, anchor: .top)
+            }
+            #endif
+            }
+            .brandList()
+            .brandSolidBar()
+            .environment(\.openNumbersDetail) { detail = $0 }
+            .navigationDestination(item: $detail) { spec in
+                NumbersDetail(spec: spec, county: county, scopeName: scopeName)
             }
             .navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $showAbout) { AboutDataSheet() }
@@ -116,21 +112,30 @@ struct FunFactsView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { showAbout = true } label: {
-                        Image(systemName: "info.circle").font(.body).foregroundStyle(.secondary)
+                        Image(systemName: "info")
+                            .font(.bt(.body, .semibold)).foregroundStyle(.secondary)
+                            .brandToolbarChip()
                     }
                     .accessibilityLabel("About this data")
                 }
-                ToolbarItem(placement: .principal) {
-                    Text("By the Numbers").font(.serifDisplay(17, .bold))
-                }
+                .brandHideGlass()
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { model.showFunFacts = false } label: {
-                        Image(systemName: "xmark").font(.body.weight(.semibold)).foregroundStyle(.secondary)
+                        Image(systemName: "xmark").font(.bt(.body, .semibold)).foregroundStyle(.secondary)
+                            .brandToolbarChip()
                     }
                     .accessibilityLabel("Close")
                 }
+                .brandHideGlass()
+            }
+            // The tour's step, inside the sheet that covers it.
+            .safeAreaInset(edge: .bottom) {
+                TourSheetGuide(step: .numbers,
+                               text: "Each chart shows how every precinct in \(scopeName) compares. Yours is marked You.",
+                               continueTitle: "Continue", close: { model.showFunFacts = false })
             }
         }
+        .environment(\.brandClose, { model.showFunFacts = false })
         .task(id: model.selectedState) {
             county = nil
             counties = coverageRegion(model.selectedState)?.isAggregate == true
@@ -138,54 +143,52 @@ struct FunFactsView: View {
         }
         .task(id: scopeKey) {
             await load()
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            // A tapped stat on the card opens this page scrolled to its chart.
+            if let m = model.numbersFocus {
+                model.numbersFocus = nil
+                focusTarget = m.rawValue
+            }
+            #if DEBUG
+            let args = ProcessInfo.processInfo.arguments
+            if args.contains("-openAbout") { showAbout = true }
+            if args.contains("-openCounties") { showCountyPicker = true }
+            if let m = UserDefaults.standard.string(forKey: "openDetail").flatMap(Metric.init(rawValue:)) {
+                detail = NumbersDetailSpec(metric: m, bucket: UserDefaults.standard.string(forKey: "exploreBucket").flatMap { Int($0) }, opensOnYou: true)
+            }
+            #endif
         }
     }
 
-    @ViewBuilder
-    private func rowView(_ item: RowItem) -> some View {
-        switch item {
-        case .single(let f):
-            FactRow(fact: f, onTap: { tap(f) }, onSeeAll: { leaderboard = $0 })
-        case .range(let low, let high, let key):
-            RangeRow(low: low, high: high, pairKey: key,
-                     onTap: { tap($0) }, onSeeAll: { leaderboard = $0 })
-        case .tenure(let renter, let owner):
-            TenureRow(renter: renter, owner: owner, onTap: { tap($0) }, onSeeAll: { leaderboard = $0 })
-        }
-    }
-
-    private func tap(_ f: FunFact) {
-        guard let unitID = f.unitID, let la = f.lat, let lo = f.lon,
-              model.selectByUnitID(unitID, fallbackLat: la, fallbackLon: lo) else { return }
-        model.showFunFacts = false
-    }
-
+    /// The area is the page title. Tapping it opens the county picker.
     @ViewBuilder
     private var scopeRow: some View {
         let isAggregate = coverageRegion(model.selectedState)?.isAggregate == true
-        let label = HStack(spacing: 10) {
-            Image(systemName: "line.3.horizontal.decrease.circle.fill").foregroundStyle(.tint)
-            Text(county.map { countyDisplay($0) } ?? "All of \(stateName(model.selectedState))")
-                .fontWeight(.semibold).foregroundStyle(.primary)
-                .lineLimit(dts.isAccessibilitySize ? nil : 1)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer()
-            if !isAggregate {
-                Image(systemName: "chevron.up.chevron.down").font(.caption).foregroundStyle(.secondary)
+        let title = VStack(alignment: .leading, spacing: 2) {
+            Text("By the Numbers").font(.bt(.subheadline, .semibold)).foregroundStyle(.secondary)
+                .dynamicTypeSize(...DynamicTypeSize.xxLarge)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(scopeName)
+                    .brandScaledDisplay(32, .heavy).foregroundStyle(Color(uiColor: .label))
+                    .lineLimit(dts.isAccessibilitySize ? nil : 1).minimumScaleFactor(0.7)
+                if !isAggregate {
+                    Image(systemName: "chevron.down").font(.bt(.title3, .bold)).foregroundStyle(.secondary)
+                }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
 
-        if isAggregate {
-            label
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Coverage area \(stateName(model.selectedState))")
-        } else {
-            Button { showCountyPicker = true } label: { label }
-                .accessibilityElement(children: .combine)
-                .accessibilityAddTraits(.isButton)
-                .accessibilityHint("Choose a county")
+        Group {
+            if isAggregate {
+                title
+            } else {
+                Button { showCountyPicker = true } label: { title }.buttonStyle(.plain)
+            }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isAggregate ? [] : .isButton)
+        .accessibilityHint(isAggregate ? "" : "Choose a county")
     }
 }
 
@@ -207,17 +210,20 @@ private struct CountyPicker: View {
                 Button { choose(nil) } label: {
                     choiceLabel("All of \(stateName(state))", selected: selection == nil)
                 }
-                ForEach(filtered, id: \.self) { county in
+                .brandRowRule(last: filtered.isEmpty)
+                ForEach(Array(filtered.enumerated()), id: \.element) { i, county in
                     Button { choose(county) } label: {
                         choiceLabel(countyDisplay(county), selected: selection == county)
                     }
+                    .brandRowRule(last: i == filtered.count - 1)
                 }
             }
+            .brandList()
             .searchable(text: $query, prompt: "Search counties")
-            .navigationTitle("Choose a County")
+            .navigationTitle("Choose a county")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .topBarTrailing) { BrandDoneButton { dismiss() } }.brandHideGlass()
             }
         }
     }
@@ -233,114 +239,12 @@ private struct CountyPicker: View {
             // hierarchy resolves against the tint and every row renders link-blue.
             Text(title).foregroundStyle(Color.primary)
             Spacer()
-            if selected { Image(systemName: "checkmark").foregroundStyle(.tint) }
+            if selected { Image(systemName: "checkmark").fontWeight(.semibold).foregroundStyle(Color(uiColor: .label)) }
         }
     }
 }
 
-// MARK: - Row grouping (fuse min/max pairs)
-
-enum RowItem: Identifiable {
-    case single(FunFact)
-    case range(low: FunFact, high: FunFact, key: String)
-    case tenure(renter: FunFact, owner: FunFact)
-    var id: String {
-        switch self {
-        case .single(let f):       return "s-\(f.id)"
-        case .range(_, _, let k):  return "r-\(k)"
-        case .tenure:              return "t-tenure"
-        }
-    }
-}
-
-/// Collapse a category's facts into row items in emit order: a pairKey's two facts fuse into one
-/// range (or tenure) row; everything else stays a single row. Unmatched halves fall back to single.
-func funFactRowItems(_ facts: [FunFact]) -> [RowItem] {
-    var items: [RowItem] = []
-    var used = Set<String>()
-    for f in facts {
-        if used.contains(f.id) { continue }
-        guard let pk = f.pairKey,
-              let partner = facts.first(where: { $0.pairKey == pk && $0.id != f.id }) else {
-            items.append(.single(f)); used.insert(f.id); continue
-        }
-        used.insert(f.id); used.insert(partner.id)
-        if pk == "tenure" {
-            let renter = (f.id == "renter") ? f : partner
-            let owner  = (f.id == "owner")  ? f : partner
-            items.append(.tenure(renter: renter, owner: owner))
-        } else {
-            let low  = (f.kind == .rangeLow)  ? f : partner
-            let high = (f.kind == .rangeHigh) ? f : partner
-            items.append(.range(low: low, high: high, key: pk))
-        }
-    }
-    return items
-}
-
-/// Keep ranked-place labels readable in narrow rows. County and city suffixes add no
-/// information once the state is shown, and the DMV's full jurisdiction names otherwise
-/// force the useful precinct label into an ellipsis.
-private func compactPlace(_ place: String) -> String {
-    let placePieces = place.components(separatedBy: " (")
-    let head = placePieces.first ?? place
-    let pieces = head.split(separator: ",", maxSplits: 1, omittingEmptySubsequences: false)
-    guard pieces.count == 2 else { return place }
-    let rawLocality = pieces[0].trimmingCharacters(in: .whitespaces)
-    var locality = pieces[0].trimmingCharacters(in: .whitespaces)
-    if locality == "District of Columbia" { locality = "DC" }
-    for suffix in [" County", " borough"] where locality.hasSuffix(suffix) {
-        locality.removeLast(suffix.count)
-        break
-    }
-    let state = pieces[1].trimmingCharacters(in: .whitespaces)
-    guard placePieces.count > 1 else {
-        return locality == "DC" && state == "DC" ? "DC" : "\(locality), \(state)"
-    }
-    var identifier = placePieces.dropFirst().joined(separator: " (")
-        .replacingOccurrences(of: ")", with: "")
-    if identifier.hasPrefix("\(rawLocality) ") {
-        identifier.removeFirst(rawLocality.count + 1)
-    }
-    identifier = identifier.replacingOccurrences(of: "Precinct ", with: "")
-    let base = locality == "DC" && state == "DC" ? "DC" : "\(locality), \(state)"
-    return identifier.isEmpty ? base : "\(base) (\(identifier))"
-}
-
-private func shortPlace(_ p: String) -> String {
-    let compact = compactPlace(p)
-    guard let open = compact.range(of: " ("),
-                                  let close = compact.lastIndex(of: ")"),
-                                  close > open.upperBound else { return compact }
-    // Facility names and precinct codes add noise at this width. Keep the comparison label to
-    // the jurisdiction, and leave the exact winning precinct in the profile and accessibility
-    // label where it can be read without competing with the range itself.
-    return String(compact[..<open.lowerBound])
-}
-
-/// Fact rows have a fixed visual height. Keep a short precinct identifier when it helps, but
-/// leave unusually long facility names to the profile and accessibility label instead of growing
-/// the row or introducing an ellipsis.
-private func factPlace(_ place: String) -> String {
-    let compact = compactPlace(place)
-    guard let open = compact.range(of: " ("),
-                                  let close = compact.lastIndex(of: ")"),
-                                  close > open.upperBound else { return compact }
-    let identifier = compact[open.upperBound..<close]
-    return identifier.count > 20 ? String(compact[..<open.lowerBound]) : compact
-}
-
-// MARK: - Components
-
-/// Semantic tint: partisan facts → red/blue; everything else → neutral ink.
-func factTint(_ f: FunFact) -> Color {
-    guard f.category == .politics else { return .secondary }
-    switch f.id {
-    case "dem", "shiftD": return Palette.lean(0.85)
-    case "rep", "shiftR": return Palette.lean(0.15)
-    default:              return .secondary
-    }
-}
+// MARK: - Overview and About this data
 
 private struct OverviewGrid: View {
     @Environment(\.dynamicTypeSize) private var dts
@@ -357,540 +261,45 @@ private struct OverviewGrid: View {
         LazyVGrid(columns: cols, spacing: 16) {
             BigStat(value: overview.precinctCount.formatted(), label: "Precincts", delta: nil)
             BigStat(value: overview.totalPopulation.map { Fmt.compact($0) } ?? "No data", label: "Population", delta: nil)
-            BigStat(value: leanText, label: "Avg precinct lean", delta: nil, valueColor: Palette.lean(overview.avgDemShare))
-            BigStat(value: overview.medianIncome.map { Fmt.incomeTopCoded($0) } ?? "No data", label: "Median income", delta: nil)
+            BigStat(value: leanText, label: "Presidential lean", delta: nil, valueColor: Palette.lean(overview.avgDemShare))
+            BigStat(value: overview.medianIncome.map { Fmt.incomeTopCoded($0) } ?? "No data", label: "Median precinct income", delta: nil)
         }
         .padding(.vertical, 4)
     }
 }
-
-private struct LeanBar: View {
-    @Environment(\.dynamicTypeSize) private var dts
-    let buckets: [LeanBucket]
-    private func share(_ label: String) -> Double {
-        switch label {
-        case "Solid Rep": return 0.1
-        case "Lean Rep":  return 0.4
-        case "Even":      return 0.5
-        case "Lean Dem":  return 0.6
-        case "Solid Dem": return 0.9
-        default:          return 0.5
-        }
-    }
-    private var total: Int { max(1, buckets.reduce(0) { $0 + $1.count }) }
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Lean distribution").font(.subheadline.weight(.semibold))
-            let ordered = buckets.sorted { share($0.label) > share($1.label) }   // Dem (blue) left -> Rep (red) right
-            GeometryReader { geo in
-                HStack(spacing: 0) {
-                    ForEach(ordered) { b in
-                        Rectangle().fill(Palette.lean(share(b.label)))
-                            .frame(width: geo.size.width * CGFloat(b.count) / CGFloat(total))
-                    }
-                }
-            }
-            .frame(height: 14).clipShape(Capsule())
-            .accessibilityElement()
-            .accessibilityLabel("Lean distribution: " + ordered.map { "\($0.count) \($0.label)" }.joined(separator: ", "))
-            let labelsLayout = dts.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading))
-                : AnyLayout(HStackLayout())
-            labelsLayout {
-                Text("Democratic").font(.caption2).foregroundStyle(Palette.lean(0.85))
-                if !dts.isAccessibilitySize { Spacer() }
-                Text("Republican").font(.caption2).foregroundStyle(Palette.lean(0.15))
-            }
-        }
-        .padding(.vertical, 4)
-    }
-}
-
-/// A neutral pill that drills into a fact's full list. It can name the count or say "N tied" when
-/// the exact tie count is the reason for drilling in. Never the lean palette.
-private struct SeeAllChip: View {
-    let tieCount: Int?
-    var showsTieWording = false
-    var body: some View {
-        HStack(spacing: 3) {
-            Text(tieCount.map {
-                showsTieWording ? "\($0) tied" : ($0 == 1 ? "1 precinct" : "\($0) precincts")
-            } ?? "See all")
-            Image(systemName: "chevron.right")
-        }
-        .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-        // Holds its width, exactly like the value above it. Without this the chip is the only
-        // thing in the row that can give, so a long place name ("San Bernardino County, CA
-        // (UNI1555)") squeezed it until it wrapped mid-word into "Se / e / all". The place
-        // name truncates instead, which it is already set up to do.
-        .lineLimit(1)
-        .fixedSize()
-        .padding(.horizontal, 7).padding(.vertical, 2)
-        .background(Color(.tertiarySystemFill), in: Capsule())
-    }
-}
-
-/// One superlative as a List row (no card chrome — the inset section provides the background).
-/// The row taps to the winning precinct; the chip (if a crowd) drills into the full list.
-private struct FactRow: View {
-    @Environment(\.dynamicTypeSize) private var dts
-    let fact: FunFact
-    var onTap: () -> Void = {}
-    var onSeeAll: (LeaderboardSpec) -> Void = { _ in }
-
-    var body: some View {
-        let layout = dts.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
-            : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
-        accessibleRow(layout {
-            Image(systemName: fact.icon).font(.body).foregroundStyle(factTint(fact))
-                .frame(width: 34, height: 34)
-                .background(Color(.tertiarySystemFill), in: Circle())
-            VStack(alignment: .leading, spacing: 2) {
-                Text(fact.title).font(.headline.weight(.semibold))
-                    .lineLimit(dts.isAccessibilitySize ? nil : 1)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let sub = fact.subtitle {
-                    Text(sub).font(.caption).foregroundStyle(.secondary)
-                        .lineLimit(dts.isAccessibilitySize ? nil : 2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Text(factPlace(fact.place)).font(.caption).foregroundStyle(.secondary)
-                    .lineLimit(dts.isAccessibilitySize ? nil : 1).minimumScaleFactor(0.85).allowsTightening(true)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityLabel(fact.place)
-            }
-            .layoutPriority(1)
-            if !dts.isAccessibilitySize { Spacer(minLength: 10) }
-            VStack(alignment: dts.isAccessibilitySize ? .leading : .trailing, spacing: 4) {
-                Text(fact.value).font(.headline.bold().monospacedDigit())
-                    .lineLimit(1).fixedSize()
-                if let lb = fact.leaderboard {
-                    Button { onSeeAll(lb) } label: { SeeAllChip(tieCount: fact.tieCount) }.buttonStyle(.plain)
-                }
-            }
-        }
-        .padding(.vertical, 4)
-        .contentShape(Rectangle())
-        .onTapGesture { onTap() })
-    }
-
-    @ViewBuilder
-    private func accessibleRow<Content: View>(_ content: Content) -> some View {
-        if let leaderboard = fact.leaderboard {
-            content
-                .accessibilityElement(children: .combine)
-                .accessibilityAddTraits(.isButton)
-                .accessibilityAction { onTap() }
-                .accessibilityAction(named: "See all rankings") { onSeeAll(leaderboard) }
-        } else {
-            content
-                .accessibilityElement(children: .combine)
-                .accessibilityAddTraits(.isButton)
-                .accessibilityAction { onTap() }
-        }
-    }
-}
-
-/// A min↔max pair fused into one row: both endpoints with a track between, showing the span.
-private struct RangeRow: View {
-    @Environment(\.dynamicTypeSize) private var dts
-    let low: FunFact
-    let high: FunFact
-    let pairKey: String
-    var onTap: (FunFact) -> Void = { _ in }
-    var onSeeAll: (LeaderboardSpec) -> Void = { _ in }
-
-    private var label: String {
-        switch pairKey {
-        case "lean":   return "Partisan lean"
-        case "shift":  return "Recent shift"
-        case "edu":    return "College degree"
-        case "age":    return "Median age"
-        case "income": return "Household income"
-        default:       return ""
-        }
-    }
-    private var partisan: Bool { pairKey == "lean" || pairKey == "shift" }
-    private var leftFact: FunFact { partisan ? high : low }
-    private var rightFact: FunFact { partisan ? low : high }
-    private func valueColor(_ f: FunFact) -> Color { partisan ? factTint(f) : .primary }
-    // The partisan track carries meaning: Democratic is always on the left and Republican on
-    // the right, with the center rule marking an even split. The other metrics only need a quiet
-    // connector between their low and high endpoints; a color ramp would imply a scale we do not
-    // actually encode in the row.
-    @ViewBuilder
-    private var connector: some View {
-        if partisan {
-            ZStack {
-                HStack(spacing: 1) {
-                    Palette.dem
-                    Palette.rep
-                }
-                .frame(height: 5)
-                .clipShape(Capsule())
-                Rectangle()
-                    .fill(Color(.systemBackground).opacity(0.95))
-                    .frame(width: 2, height: 9)
-                    .accessibilityHidden(true)
-            }
-        } else {
-            Rectangle()
-                .fill(Color.secondary.opacity(0.34))
-                .frame(height: 1)
-        }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(label).font(.headline.weight(.semibold))
-                .fixedSize(horizontal: false, vertical: true)
-            let layout = dts.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 12))
-                : AnyLayout(HStackLayout(alignment: .center, spacing: 10))
-            layout {
-                endpoint(leftFact)
-                if !dts.isAccessibilitySize {
-                    connector.frame(width: 150)
-                } else {
-                    Divider()
-                }
-                endpoint(rightFact)
-            }
-        }
-        .padding(.vertical, 4)
-    }
-
-    private func endpoint(_ f: FunFact) -> some View {
-        let incomeLeaderboard = pairKey == "income" && f.id == "income" ? f.leaderboard : nil
-        return Button {
-            if let incomeLeaderboard { onSeeAll(incomeLeaderboard) } else { onTap(f) }
-        } label: {
-            VStack(alignment: .center, spacing: 2) {
-                Text(f.value).font(.headline.bold().monospacedDigit()).foregroundStyle(valueColor(f))
-                    .lineLimit(1).fixedSize()
-                    .accessibilityIdentifier("Range value \(f.id)")
-                Text(shortPlace(f.place)).font(.caption2).foregroundStyle(.secondary)
-                    .lineLimit(dts.isAccessibilitySize ? nil : 1)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .minimumScaleFactor(0.82).allowsTightening(true)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                if incomeLeaderboard != nil {
-                    SeeAllChip(tieCount: f.tieCount, showsTieWording: true)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .center)
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier(incomeLeaderboard == nil
-                                 ? "Range endpoint \(f.id)"
-                                 : "Highest income leaderboard")
-        .accessibilityLabel(f.tieCountLabel.map { "\(f.value), \($0) tied" }
-                            ?? "\(f.value), \(f.place)")
-        .accessibilityHint(incomeLeaderboard == nil
-                           ? "Double-tap to view this precinct"
-                           : "Double-tap to view the income leaderboard")
-    }
-}
-
-/// Renters and owners both saturate at 100%, so a range or a ranked list is meaningless. Show the
-/// two COUNTS (how many precincts are entirely one or the other), each drilling into a directory.
-private struct TenureRow: View {
-    @Environment(\.dynamicTypeSize) private var dts
-    let renter: FunFact
-    let owner: FunFact
-    var onTap: (FunFact) -> Void = { _ in }
-    var onSeeAll: (LeaderboardSpec) -> Void = { _ in }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            Text("Home tenure").font(.headline.weight(.semibold))
-            let layout = dts.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
-                : AnyLayout(HStackLayout(spacing: 12))
-            layout {
-                stat(renter, noun: "renter")
-                if dts.isAccessibilitySize { Divider() }
-                else { Divider().frame(height: 36) }
-                stat(owner, noun: "owner")
-            }
-        }
-        .padding(.vertical, 6)
-    }
-
-    @ViewBuilder
-    private func stat(_ f: FunFact, noun: String) -> some View {
-        let saturated = f.tieCount != nil
-        Button {
-            if let lb = f.leaderboard { onSeeAll(lb) } else { onTap(f) }
-        } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
-                    Text(saturated ? "\(f.tieCount!)" : f.value)
-                        .font(.title3.bold().monospacedDigit()).foregroundStyle(.primary)
-                    Image(systemName: "chevron.right").font(.caption2.weight(.bold)).foregroundStyle(.tertiary)
-                }
-                Text(saturated ? "all-\(noun) precincts" : "most \(noun)-occupied")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .lineLimit(dts.isAccessibilitySize ? nil : 1)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-// MARK: - Methodology
 
 private struct AboutDataSheet: View {
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
             List {
-                Section("Where this comes from") {
-                    aboutRow("Votes", "Each precinct's latest available presidential election. The year can differ by precinct.")
-                    aboutRow("People and money", "The 2020 Census and the Census Bureau's American Community Survey, a rolling five-year estimate.")
-                    NavigationLink("Sources and licenses") { SourcesView() }
-                }
-                Section("Things worth knowing") {
+                Section {
+                    aboutRow("Politics", "Each precinct's latest available presidential election. The year can differ by precinct.")
+                    aboutRow("Demographics", "The 2020 Census and the Census Bureau's American Community Survey, a rolling five-year estimate.")
+                    NavigationLink { SourcesView() } label: { BrandLinkRow(title: "Sources and licenses") }
+                        .brandHideDisclosure()
+                } header: { BrandListHeader("Where this comes from") }
+                .listRowSeparator(.hidden)
+                Section {
                     aboutRow("Income tops out", "The Census reports household income only up to $250,000, shown here as $250k+, so many well-off precincts tie at that ceiling.")
                     aboutRow("Race can pass 100%", "Race and Hispanic origin are counted separately, so a precinct's race shares can add up to more than 100%.")
                     aboutRow("Small precincts sit out", "Rankings skip very small precincts (under about 500 people or 100 votes), where a single household can swing the number.")
-                }
+                    aboutRow("Turnout can pass 100%", "Turnout compares votes with a Census estimate of eligible adults. Where that estimate runs low, the result can pass 100%. Up to 105% shows as 100%. Above that, the app leaves turnout out and shows the vote count.")
+                } header: { BrandListHeader("Things worth knowing") }
+                .listRowSeparator(.hidden)
             }
-            .navigationTitle("About This Data")
+            .brandList()
+            .navigationTitle("About this data")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { BrandDoneButton { dismiss() } }.brandHideGlass() }
         }
+        .environment(\.brandClose, { dismiss() })
     }
     private func aboutRow(_ title: String, _ detail: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.subheadline.weight(.semibold))
-            Text(detail).font(.caption).foregroundStyle(.secondary)
+            Text(title).font(.bt(.subheadline, .semibold))
+            Text(detail).brandNoteStyle()
         }
         .padding(.vertical, 2)
     }
 }
-
-// MARK: - Drill-in list (ranked, or a directory when every value ties)
-
-private struct PrecinctLeaderboard: View {
-    @EnvironmentObject var model: LocationModel
-    let spec: LeaderboardSpec
-    @State private var rows: [LeaderRow] = []
-    @State private var loaded = false
-
-    /// Every displayed value identical (a ceiling/saturated tie) → rank + value columns are noise.
-    private var saturated: Bool {
-        guard spec.unrankedTieCount == nil else { return false }
-        guard rows.count >= 3 else { return false }
-        return Set(rows.map { valueText($0.value) }).count == 1
-    }
-
-    private var tiedRows: ArraySlice<LeaderRow> {
-        rows.prefix(min(spec.unrankedTieCount ?? 0, rows.count))
-    }
-
-    private var rankedRows: ArraySlice<LeaderRow> {
-        rows.dropFirst(tiedRows.count)
-    }
-
-    var body: some View {
-        List {
-            if let tieCount = spec.unrankedTieCount, let tieValue = spec.unrankedTieValue {
-                Section {
-                    ForEach(tiedRows) { r in
-                        Button { go(r) } label: { row(nil, r, showValue: false) }
-                            .buttonStyle(.plain)
-                            .accessibilityIdentifier("Income tied precinct \(r.id)")
-                    }
-                } header: {
-                    Text(spec.unrankedTieSummary(value: valueText(tieValue))
-                         ?? "\(tieCount) precincts tie at \(valueText(tieValue))")
-                        .font(.subheadline.weight(.semibold)).foregroundStyle(.primary).textCase(nil)
-                }
-                Section {
-                    ForEach(Array(rankedRows.enumerated()), id: \.element.id) { idx, r in
-                        Button { go(r) } label: { row(idx + 1, r) }.buttonStyle(.plain)
-                    }
-                } header: {
-                    Text("Next highest reported incomes").textCase(nil)
-                } footer: {
-                    if rankedRows.count >= 25 { Text("The next 25 precincts below the Census cap.") }
-                }
-            } else {
-                Section {
-                    ForEach(Array(rows.enumerated()), id: \.element.id) { idx, r in
-                        Button { go(r) } label: { row(idx + 1, r) }.buttonStyle(.plain)
-                    }
-                    if loaded && rows.isEmpty {
-                        Text("No precincts.").font(.subheadline).foregroundStyle(.secondary)
-                    }
-                } header: {
-                    if saturated {
-                        Text("\(rows.count) precincts tie at \(valueText(rows.first?.value ?? 0))")
-                            .font(.subheadline.weight(.semibold)).foregroundStyle(.primary).textCase(nil)
-                    } else {
-                        Text(spec.note).font(.caption).foregroundStyle(.secondary).textCase(nil)
-                    }
-                } footer: {
-                    if rows.count >= 25 { Text("The 25 leaders in this area.") }
-                }
-            }
-        }
-        .listStyle(.insetGrouped)
-        .navigationTitle(spec.title)
-        .navigationBarTitleDisplayMode(.inline)
-        .task {
-            guard !loaded else { return }
-            rows = PrecinctDB.shared.topPrecincts(spec)
-            loaded = true
-        }
-    }
-
-    private func go(_ r: LeaderRow) {
-        guard model.selectByUnitID(r.id, fallbackLat: r.lat, fallbackLon: r.lon) else { return }
-        model.showFunFacts = false
-    }
-
-    private func valueText(_ v: Double) -> String {
-        switch spec.displayKind {
-        case .money:   return Fmt.incomeTopCoded(Int(v))
-        case .pct:     return Fmt.pct(v)
-        case .age:     return "\(Int(v.rounded()))"
-        case .density: return "\(Int(v).formatted())/mi²"
-        case .lean:
-            let m = Int(((v - 0.5) * 200).rounded())
-            return m > 0 ? "D+\(m)" : (m < 0 ? "R+\(-m)" : "Even")
-        case .shiftPts:
-            let p = Int((v * 100).rounded())
-            return p >= 0 ? "D+\(p)" : "R+\(-p)"
-        }
-    }
-
-    private func place(_ r: LeaderRow) -> String {
-        compactPlace(fullPlace(r))
-    }
-
-    private func fullPlace(_ r: LeaderRow) -> String {
-        let c = countyDisplay(r.borough)
-        return r.precinctName.isEmpty ? "\(c), \(r.state)" : "\(c), \(r.state) (\(precinctDisplayName(r.precinctName)))"
-    }
-
-    private func row(_ rank: Int?, _ r: LeaderRow, showValue: Bool = true) -> some View {
-        HStack(spacing: 12) {
-            if let rank, !saturated {
-                Text("\(rank)").font(.subheadline.monospacedDigit().weight(.semibold))
-                    .foregroundStyle(.secondary).frame(width: 24, alignment: .trailing)
-            }
-            Text(place(r)).font(.subheadline).foregroundStyle(.primary)
-                .lineLimit(1).minimumScaleFactor(0.75).allowsTightening(true)
-                .accessibilityLabel(fullPlace(r))
-            Spacer(minLength: 12)
-            if showValue && !saturated {
-                Text(valueText(r.value)).font(.subheadline.bold().monospacedDigit())
-                    .lineLimit(1).fixedSize().layoutPriority(1)
-            }
-            Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
-        }
-        .padding(.vertical, 5)
-        .contentShape(Rectangle())
-    }
-}
-
-#if DEBUG
-/// Debug-only: a non-scrolling, full-height render of the page, for exporting a tall marketing
-/// screenshot via ImageRenderer (which can't drive a scrolling List). Mirrors the live components
-/// inside manual grouped backgrounds so the export stays close to what users see.
-struct ByNumbersExport: View {
-    let overview: ScopeOverview?
-    let facts: [FunFact]
-    let stateDisplay: String          // e.g. "New York"
-
-    private var statusBar: some View {
-        ZStack {
-            Capsule().fill(.black).frame(width: 125, height: 36)
-            HStack(spacing: 0) {
-                Text("9:41").font(.system(size: 17, weight: .semibold))
-                Image(systemName: "location.north.fill")
-                    .font(.system(size: 10, weight: .bold)).rotationEffect(.degrees(45)).padding(.leading, 5)
-                Spacer()
-                Image(systemName: "cellularbars").font(.system(size: 16))
-                Image(systemName: "wifi").font(.system(size: 16)).padding(.leading, 7)
-                Image(systemName: "battery.100.bolt").font(.system(size: 16)).foregroundStyle(.green).padding(.leading, 7)
-            }
-            .padding(.horizontal, 21)
-        }
-        .foregroundStyle(.black)
-        .frame(height: 64)
-    }
-
-    private var navBar: some View {
-        ZStack {
-            Text("By the Numbers").font(.serifDisplay(17, .bold))
-            HStack {
-                Image(systemName: "info.circle").font(.body).foregroundStyle(.secondary)
-                Spacer()
-                Image(systemName: "xmark").font(.body.weight(.semibold)).foregroundStyle(.secondary)
-            }.padding(.horizontal, 18)
-        }
-        .frame(height: 44)
-    }
-
-    private func group<C: View>(@ViewBuilder _ content: () -> C) -> some View {
-        VStack(alignment: .leading, spacing: 10) { content() }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 12).fill(Color(.secondarySystemGroupedBackground)))
-    }
-
-    @ViewBuilder
-    private func exportRow(_ item: RowItem) -> some View {
-        switch item {
-        case .single(let f):                       FactRow(fact: f)
-        case .range(let low, let high, let key):   RangeRow(low: low, high: high, pairKey: key)
-        case .tenure(let renter, let owner):       TenureRow(renter: renter, owner: owner)
-        }
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            statusBar
-            navBar
-            VStack(alignment: .leading, spacing: 18) {
-                HStack(spacing: 10) {
-                    Image(systemName: "line.3.horizontal.decrease.circle.fill").foregroundStyle(.tint)
-                    Text("All of \(stateDisplay)").fontWeight(.semibold)
-                    Spacer()
-                    Image(systemName: "chevron.up.chevron.down").font(.caption).foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 14).padding(.vertical, 10)
-                .background(Color(.secondarySystemGroupedBackground), in: Capsule())
-
-                if let overview {
-                    group {
-                        OverviewGrid(overview: overview)
-                        if !overview.leanBuckets.isEmpty { Divider(); LeanBar(buckets: overview.leanBuckets) }
-                    }
-                }
-                ForEach(FactCategory.allCases, id: \.self) { cat in
-                    let items = funFactRowItems(facts.filter { $0.category == cat })
-                    if !items.isEmpty {
-                        Text(cat.title).font(.serifDisplay(15, .semibold)).foregroundStyle(.primary)
-                        group {
-                            ForEach(Array(items.enumerated()), id: \.element.id) { i, item in
-                                if i > 0 { Divider() }
-                                exportRow(item)
-                            }
-                        }
-                    }
-                }
-                Text("Presidential results use each precinct's latest available election. Demographics use the 2020 Census and ACS.")
-                    .font(.caption2).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-            }
-            .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 44)
-        }
-        .frame(width: 402, alignment: .leading)
-        .background(Color(.systemGroupedBackground))
-        .environment(\.colorScheme, .light)
-    }
-}
-#endif

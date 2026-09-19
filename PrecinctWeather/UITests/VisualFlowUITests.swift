@@ -30,8 +30,8 @@ final class VisualFlowUITests: XCTestCase {
     func testLargestTextProfileCanReachAllSectionsAndFooter() throws {
         let app = launch(largestText: true)
         app.buttons["Expand panel"].tap()
-        for label in ["Largest group: White", "Money and education", "People and housing",
-                      "2020 presidential vote. Demographics use the 2020 Census and ACS."] {
+        for label in ["Who lives here", "Money and education", "People and housing",
+                      "2020 presidential vote. Demographics use the 2020 Census and the American Community Survey."] {
             let element = app.staticTexts[label]
             for _ in 0..<10 where !element.isHittable { app.swipeUp() }
             XCTAssertTrue(element.isHittable, "\(label) could not be reached")
@@ -48,47 +48,51 @@ final class VisualFlowUITests: XCTestCase {
             XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
             attach("settings-\(appearance)", app)
             try auditClipping(app)
-            app.buttons["Done"].tap()
+            app.buttons["Close"].firstMatch.tap()
             app.buttons["By the numbers"].tap()
             XCTAssertTrue(app.buttons["About this data"].waitForExistence(timeout: 10))
             attach("rankings-\(appearance)", app)
             app.buttons["About this data"].tap()
-            XCTAssertTrue(app.navigationBars["About This Data"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.navigationBars["About this data"].waitForExistence(timeout: 5))
             attach("data-notes-\(appearance)", app)
             try auditClipping(app)
             app.terminate()
         }
     }
 
+    /// By the Numbers at the largest text size: the lean chart's two ends (the most Democratic
+    /// and most Republican precincts in Oregon) must each fit on screen with their value, and
+    /// the Republican end must still open its precinct.
     func testLargestTextRankingsKeepBothValuesOnscreen() throws {
         let app = launch(largestText: true)
         app.buttons["By the numbers"].tap()
-        let scope = app.buttons["All of Oregon"]
+        let scope = app.buttons["By the Numbers, Oregon"]
         XCTAssertTrue(scope.waitForExistence(timeout: 10))
         attach("large-text-rankings-overview", app)
         try auditClipping(app)
         let screen = app.windows.firstMatch.frame
-        for id in ["dem", "rep"] {
-            let value = app.staticTexts["Range value \(id)"]
+        for (title, value) in [("Most Democratic", "D+92"), ("Most Republican", "R+94")] {
+            let end = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "\(title), ")).firstMatch
             for _ in 0..<20 {
-                if value.exists && value.frame.minY > screen.minY + 120
-                    && value.frame.maxY < screen.maxY - 40 { break }
+                if end.exists && end.frame.minY > screen.minY + 120
+                    && end.frame.maxY < screen.maxY - 40 { break }
                 let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
-                let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-                start.press(forDuration: 0.1, thenDragTo: end)
+                let stop = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+                start.press(forDuration: 0.1, thenDragTo: stop)
             }
-            XCTAssertTrue(value.exists, app.debugDescription)
-            XCTAssertGreaterThan(value.frame.width, 0)
-            XCTAssertGreaterThan(value.frame.minY, screen.minY + 120)
-            XCTAssertLessThan(value.frame.maxY, screen.maxY - 40)
-            XCTAssertGreaterThanOrEqual(value.frame.minX, screen.minX)
-            XCTAssertLessThanOrEqual(value.frame.maxX, screen.maxX)
-            attach("large-text-rankings-value-\(id)", app)
-            // The whole-screen audit also flags adjacent list rows cut by the viewport.
-            // Check the actual value's complete frame at each scroll position instead.
-            XCTAssertEqual(value.label, id == "dem" ? "D+92" : "R+94")
+            XCTAssertTrue(end.exists, app.debugDescription)
+            XCTAssertGreaterThan(end.frame.width, 0)
+            XCTAssertGreaterThan(end.frame.minY, screen.minY + 120)
+            XCTAssertLessThan(end.frame.maxY, screen.maxY - 40)
+            XCTAssertGreaterThanOrEqual(end.frame.minX, screen.minX)
+            XCTAssertLessThanOrEqual(end.frame.maxX, screen.maxX)
+            attach("large-text-rankings-\(value)", app)
+            // The whole-screen audit also flags adjacent charts cut by the viewport.
+            // Check the actual end's complete frame at each scroll position instead.
+            XCTAssertEqual(end.label.components(separatedBy: ", ").dropFirst().first, value)
         }
-        app.buttons["Range endpoint rep"].tap()
+        // A single precinct at the end opens on the map.
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Most Republican, '")).firstMatch.tap()
         XCTAssertTrue(app.buttons["Expand panel"].waitForExistence(timeout: 10))
     }
 

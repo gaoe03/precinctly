@@ -94,6 +94,8 @@ final class LocationModel: NSObject, ObservableObject, CLLocationManagerDelegate
     @Published var locationDenied = false
     @Published var showSearch = false
     @Published var showFunFacts = false
+    /// Measure to open in By the Numbers when a stat in the card is tapped.
+    @Published var numbersFocus: Metric?
     @Published var showSettings = false
     @Published var selectedState = "NY"
 

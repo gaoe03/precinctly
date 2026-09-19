@@ -1,3 +1,4 @@
+import WidgetKit
 import SwiftUI
 import MapKit
 import CoreLocation
@@ -7,8 +8,6 @@ import PrecinctKit
 // MARK: - Root: map + bottom sheet
 
 struct ContentView: View {
-    var onboardingReview = false
-    var hideProfilePanel = false
     @EnvironmentObject var model: LocationModel
     @State private var camera: MapCameraPosition = .region(.nyc)
     @State private var expanded = false        // bottom panel: peek ↔ full
@@ -17,8 +16,16 @@ struct ContentView: View {
     @State private var selectionFlightActive = false
     @State private var selectionFlightTarget: MKCoordinateRegion?
     @State private var suppressCountyTint = false
-    @AppStorage("hasOnboarded") private var storedHasOnboarded = false
-    private var hasOnboarded: Bool { onboardingReview || storedHasOnboarded }
+    @AppStorage("hasOnboarded") private var hasOnboarded = false
+    /// Set when the 1.1 tour finishes. People updating from 1.0 have `hasOnboarded` but not this,
+    /// so they see the tour once. Later updates find it set and skip the tour.
+    @AppStorage("sawTour") private var sawTour = false
+    private var tourDue: Bool {
+        if !hasOnboarded { return true }
+        // A launch that sets hasOnboarded explicitly (tests, screenshot capture) decides alone.
+        if UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)["hasOnboarded"] != nil { return false }
+        return !sawTour
+    }
     @AppStorage("defaultState") private var defaultState = "NY"
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -27,6 +34,10 @@ struct ContentView: View {
     // on "Start exploring" otherwise lands its second tap on the map, selects a random
     // precinct, and cancels the post-permission GPS recenter.
     @State private var mapGesturesArmed = false
+    @ObservedObject private var tour = OnboardingTour.shared
+    /// Only the welcome screen hides the app from VoiceOver. During the steps the real
+    /// controls stay reachable so the reader can use them.
+    private var tourCoversApp: Bool { tour.step == .welcome }
 
     var body: some View {
         ZStack {
@@ -42,20 +53,23 @@ struct ContentView: View {
                 onSelectionFlightEnded: finishSelectionFlight
             )
         }
-        .accessibilityHidden(expanded || !hasOnboarded)
+        .accessibilityHidden(expanded || tourCoversApp)
         .overlay(alignment: .bottomTrailing) {
             locateControl.padding(.trailing, 12)
                 .padding(.bottom, BottomPanel.peekHeight(for: dynamicTypeSize) + 12)
-                .accessibilityHidden(expanded || !hasOnboarded)
+                .accessibilityHidden(expanded || tourCoversApp)
         }
         .onAppear {
             if model.selection == nil { camera = .region(initialRegion(for: model.selectedState)) }
-            // First run: onboarding explains the app BEFORE the location permission dialog,
-            // so start() (which triggers the prompt) waits for the card to be dismissed.
-            if hasOnboarded {
+            // First run: the tour explains the app BEFORE the location permission dialog,
+            // so start() (which triggers the prompt) waits for the tour to end.
+            if tourDue {
+                if !tour.isActive { tour.start(replay: false) }
+                seedTourCamera()
+            } else {
                 mapGesturesArmed = true
                 #if DEBUG
-                if !onboardingReview && !ProcessInfo.processInfo.arguments.contains("-disableLocation") { model.start() }
+                if !ProcessInfo.processInfo.arguments.contains("-disableLocation") { model.start() }
                 #else
                 model.start()
                 #endif
@@ -64,6 +78,26 @@ struct ContentView: View {
         .onChange(of: model.selectionRevision) {
             if let r = model.selectionRegion {
                 beginSelectionFlight(to: r)
+            }
+            if tour.step == .tap { tour.next() }
+        }
+        .onChange(of: tour.step) { tourStepChanged() }
+        .onChange(of: expanded) {
+            guard tour.step == .card else { return }
+            if expanded { tour.cardOpened = true } else if tour.cardOpened { tour.next() }
+        }
+        .onChange(of: model.showFunFacts) {
+            guard tour.step == .numbers else { return }
+            if model.showFunFacts { tour.numbersOpened = true } else if tour.numbersOpened { tour.next() }
+        }
+        .onChange(of: model.showSearch) {
+            guard tour.step == .search else { return }
+            if model.showSearch {
+                tour.searchOpenedAt = model.selectionRevision
+            } else if let opened = tour.searchOpenedAt, opened != model.selectionRevision {
+                tour.next()
+            } else {
+                tour.searchOpenedAt = nil
             }
         }
         .onChange(of: model.locationRevision) {
@@ -80,14 +114,27 @@ struct ContentView: View {
             if model.selection == nil {
                 camera = .region(initialRegion(for: model.selectedState))
             }
+            if tour.step == .coverage { tour.next() }
         }
         .task {
-            #if DEBUG   // export the full By-the-Numbers page to a tall PNG for the website asset
+            #if DEBUG   // launch-argument hooks for UI tests, self-tests and screenshot captures
             let arguments = ProcessInfo.processInfo.arguments
             if let index = arguments.firstIndex(of: "-testUnitID"), arguments.indices.contains(index + 1) {
                 let unitID = arguments[index + 1]
                 let loaded = model.selectByUnitID(unitID, fallbackLat: 0, fallbackLon: 0)
                 print("UITEST \(loaded ? "PASS" : "FAIL"): selected exact unit \(unitID)")
+            }
+            if arguments.contains("-expandSheet") {   // screenshot capture
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                expanded = true
+            }
+            if arguments.contains("-openSettings") || arguments.contains("-openSources") {
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                model.showSettings = true
+            }
+            if arguments.contains("-openSearch") {
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                model.showSearch = true
             }
             if ProcessInfo.processInfo.arguments.contains("-searchSelfTest") {
                 let cases = [
@@ -222,6 +269,38 @@ struct ContentView: View {
                     check("\(expansion.state) political facts and rankings exclude null profiles",
                           politicalFactsExcludeNulls)
                 }
+                // The By the Numbers charts as they ship: every metric's distribution, both ends
+                // of its ranking, ties on the top value and the shift years, per area.
+                for area in ["NY", "CA", "OR", CoverageRegion.dmvCore.id] {
+                    let prefixes = coverageRegion(area).map { $0.isAggregate ? $0.jurisdictions.map(\.code) : [] } ?? []
+                    for metric in Metric.allCases {
+                        let name = "\(area) \(metric.rawValue)"
+                        let dist = db.distribution(metric, state: area, county: nil, prefixes: prefixes, selectedUnitID: nil)
+                        check("\(name) counts sum to total \(dist.total)", dist.counts.reduce(0, +) == dist.total)
+                        if area == "CA" && metric == .turnout {
+                            check("\(name) total is 0 by design (got \(dist.total))", dist.total == 0)
+                        } else {
+                            check("\(name) total is positive (got \(dist.total))", dist.total > 0)
+                        }
+                        guard dist.total > 0 else { continue }
+                        let highest = db.ranked(metric, state: area, county: nil, prefixes: prefixes, bucket: nil, ascending: false, limit: 3)
+                        let lowest = db.ranked(metric, state: area, county: nil, prefixes: prefixes, bucket: nil, ascending: true, limit: 3)
+                        check("\(name) highest ranking non-empty (got \(highest.count))", !highest.isEmpty)
+                        check("\(name) lowest ranking non-empty (got \(lowest.count))", !lowest.isEmpty)
+                        // The page skips ties for the largest group, whose column is a group name.
+                        if metric != .largestGroup, let top = highest.first?.value {
+                            let ties = db.tieCount(metric, value: top, state: area, county: nil, prefixes: prefixes)
+                            check("\(name) tie count on the top value includes it (got \(ties))", ties >= 1)
+                        }
+                    }
+                    let years = db.shiftYears(state: area, county: nil, prefixes: prefixes)
+                    check("\(area) shift years present (got \(years.count) pairs)",
+                          !years.isEmpty && years.allSatisfy { $0.count > 0 })
+                }
+                let queens1322 = "36081-:-36081001322"
+                let nyLean = db.distribution(.lean, state: "NY", county: nil, selectedUnitID: queens1322)
+                check("NY lean marks \(queens1322) (bucket \(nyLean.selectedBucket.map(String.init) ?? "none"))",
+                      nyLean.selectedBucket != nil)
                 print(fails == 0 ? "SELFTEST ALL PASS" : "SELFTEST \(fails) FAILURES")
                 return
             }
@@ -230,48 +309,81 @@ struct ContentView: View {
                 model.showFunFacts = true
                 return
             }
-            guard ProcessInfo.processInfo.arguments.contains("-exportByNumbers") else { return }
-            try? await Task.sleep(nanoseconds: 800_000_000)
-            let facts = PrecinctDB.shared.funFacts(state: "NY")
-            let overview = PrecinctDB.shared.scopeOverview(state: "NY")
-            let renderer = ImageRenderer(content:
-                ByNumbersExport(overview: overview, facts: facts, stateDisplay: "New York")
-                    .environmentObject(model))
-            renderer.scale = 3
-            if let img = renderer.uiImage, let data = img.pngData() {
-                let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-                    .appendingPathComponent("bynumbers_export.png")
-                try? data.write(to: url)
-                print("EXPORT bynumbers \(Int(img.size.width))x\(Int(img.size.height)) -> \(url.path)")
+            if let i = arguments.firstIndex(of: "-exportWidgets"), arguments.indices.contains(i + 1) {
+                // Renders the real widget views to PNGs in light and dark, for marketing captures.
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                guard let p = model.selection else { print("EXPORT widgets FAIL no selection"); return }
+                let trend = PrecinctDB.shared.electionSeries(unitID: p.unitID)
+                    .filter { $0.office == "president" && $0.demShare != nil }.sorted { $0.year < $1.year }
+                var shift: Int?, since: Int?
+                if let a = trend.first, let b = trend.last, a.year != b.year, let x = a.demShare, let y = b.demShare {
+                    shift = Int(((y - x) * 200).rounded()); since = a.year
+                }
+                let entry = PrecinctEntry(date: Date(), profile: p, trend: trend,
+                                          baseline: PrecinctDB.shared.comparisonAreas(for: p).first,
+                                          shiftPts: shift, shiftSinceYear: since)
+                let dir = URL(fileURLWithPath: arguments[i + 1])
+                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                let sizes: [(String, WidgetFamily, CGSize)] = [("small", .systemSmall, CGSize(width: 170, height: 170)),
+                                                               ("medium", .systemMedium, CGSize(width: 364, height: 170)),
+                                                               ("large", .systemLarge, CGSize(width: 364, height: 382))]
+                for scheme in [ColorScheme.light, .dark] {
+                    for (name, fam, size) in sizes {
+                        let view = PrecinctHomeView(entry: entry, familyOverride: fam)
+                            .padding(EdgeInsets(top: 18, leading: 20, bottom: 18, trailing: 20))
+                            .frame(width: size.width, height: size.height)
+                            .background(WidgetColor.mapTone)
+                            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                            .environment(\.colorScheme, scheme)
+                        let r = ImageRenderer(content: view)
+                        r.scale = 3
+                        if let data = r.uiImage?.pngData() {
+                            let url = dir.appendingPathComponent("widget-\(name)-\(scheme == .dark ? "dark" : "light").png")
+                            try? data.write(to: url)
+                            print("EXPORT widget \(url.path)")
+                        }
+                    }
+                }
+                return
             }
             #endif
         }
         .overlay(alignment: .top) {
             VStack(spacing: 8) {
-                topControls
+                topControls.tourTarget(.topBar)
                 if let toast = model.toast { toastView(toast) }
             }
             .padding(.top, 8).padding(.horizontal, 12)
-            .accessibilityHidden(expanded || !hasOnboarded)
+            .accessibilityHidden(expanded || tourCoversApp)
         }
         .overlay(alignment: .bottom) {
             BottomPanel(expanded: $expanded).environmentObject(model)
-                .opacity(hideProfilePanel ? 0 : 1)
-                .allowsHitTesting(!hideProfilePanel)
-                .accessibilityHidden(!hasOnboarded || hideProfilePanel)
+                .accessibilityHidden(tourCoversApp)
         }
-        .overlay {
-            // A plain overlay, not a cover: presenting from the first frame raced the
-            // presentation machinery (and the permission dialog) and could never appear.
-            if !hasOnboarded {
-                OnboardingCard {
-                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) { storedHasOnboarded = true }
-                    model.start()
-                    Task { @MainActor in
-                        try? await Task.sleep(for: .milliseconds(600))
-                        mapGesturesArmed = true
-                    }
-                }
+        #if DEBUG
+        .overlay(alignment: .topLeading) {
+            // UI tests read the settled camera here to tell a pan from a zoom.
+            if ProcessInfo.processInfo.arguments.contains("-exposeMapCamera"), let r = visibleMapRegion {
+                Color.clear.frame(width: 1, height: 1)
+                    .accessibilityElement()
+                    .accessibilityIdentifier("Map camera")
+                    .accessibilityLabel("Map camera")
+                    .accessibilityValue(String(format: "%.6f,%.6f,%.6f,%.6f", r.center.latitude, r.center.longitude,
+                                               r.span.latitudeDelta, r.span.longitudeDelta))
+            }
+        }
+        #endif
+        // A plain overlay, not a cover: presenting from the first frame raced the presentation
+        // machinery (and the permission dialog) and could never appear. It reads the frames of
+        // the real controls so the tour can light them up where they are.
+        .overlayPreferenceValue(TourAnchorKey.self) { anchors in
+            if tour.isActive, !model.showSearch, !model.showFunFacts, !model.showSettings {
+                TourLayer(tour: tour, anchors: anchors,
+                          locationAuthorized: [.authorizedWhenInUse, .authorizedAlways]
+                            .contains(CLLocationManager().authorizationStatus),
+                          areaName: stateName(model.selectedState),
+                          perform: performTourStep,
+                          onBegin: beginTour)
             }
         }
         .animation(reduceMotion ? .none : .default, value: model.toast)
@@ -293,32 +405,31 @@ struct ContentView: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 19, weight: .semibold))
+                .foregroundStyle(Color.primary)
                 .frame(width: 44, height: 44)
         }
         .accessibilityLabel(a11y)
     }
 
-    // One chrome for every floating map control. They used to be three different treatments on
-    // one screen: a radius-12 regularMaterial rectangle for search and the action pair, a
-    // thickMaterial capsule with a hairline for the state menu, and two different shadows. Same
-    // reason the state pill went near-opaque applies to all of them: a thin material picks up
-    // whatever lean color sits under it and reads muddy and borderless over a saturated county.
+    // One chrome for every floating map control: the page color on an 8 pt rounded rectangle,
+    // a hairline and a soft shadow. Opaque, so a saturated county under it never muddies it.
     private func controlChrome<V: View>(_ content: V) -> some View {
         content
-            .background(.thickMaterial, in: Capsule())
-            .clipShape(Capsule())
-            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.12)))
-            .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
+            .background(Brand.surface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.primary.opacity(0.14), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.10), radius: 6, y: 2)
     }
 
     private var searchControl: some View {
-        controlChrome(controlIcon("magnifyingglass", "Search addresses and places") { model.showSearch = true })
+        controlChrome(controlIcon("magnifyingglass", "Search addresses and places") { model.showSearch = true }
+            .tourTarget(.search))
     }
 
     private var actionControls: some View {
         controlChrome(
             HStack(spacing: 1) {
                 controlIcon("chart.bar", "By the numbers") { model.showFunFacts = true }
+                    .tourTarget(.numbers)
                 Divider().frame(height: 30)
                 controlIcon("gearshape", "Settings") { model.showSettings = true }
             }
@@ -326,29 +437,39 @@ struct ContentView: View {
     }
 
     private var locateControl: some View {
-        controlChrome(controlIcon(model.isFollowingLocation ? "location.fill" : "location", "Locate me") { model.recenterOnMe() })
+        controlChrome(controlIcon(model.isFollowingLocation ? "location.fill" : "location", "Locate me") {
+            model.recenterOnMe()
+            if tour.step == .location { tour.next() }
+        })
             .accessibilityValue(model.isFollowingLocation ? "Following your location" : "Explore map")
+            .tourTarget(.locate)
     }
 
     @ViewBuilder
     private var topControls: some View {
         if dynamicTypeSize.isAccessibilitySize {
-            VStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     searchControl
                     Spacer(minLength: 12)
                     actionControls
                 }
-                stateSelector
+                controlChrome(stateSelector)
             }
         } else {
-            ZStack {
-                HStack {
-                    searchControl
-                    Spacer(minLength: 12)
-                    actionControls
-                }
-                stateSelector
+            // One place bar (search plus the state it searches) on the leading edge, one action
+            // group on the trailing edge. Two objects, same height, same radius.
+            HStack(spacing: 10) {
+                controlChrome(
+                    HStack(spacing: 0) {
+                        controlIcon("magnifyingglass", "Search addresses and places") { model.showSearch = true }
+                            .tourTarget(.search)
+                        Divider().frame(height: 26)
+                        stateSelector.padding(.trailing, 4)
+                    }
+                )
+                Spacer(minLength: 8)
+                actionControls
             }
             .frame(height: 44)
         }
@@ -370,25 +491,118 @@ struct ContentView: View {
             Divider()
             Button("More coverage areas soon") {}.disabled(true)
         } label: {
-            // Keep Menu's host stable while the visible capsule follows its label. UIKit keeps
-            // the host's snapshot during dismissal. If the host itself shrinks for "Texas", a
-            // later DMV label can be clipped to that old rectangle for one frame.
-            ZStack {
-                Color.clear.frame(width: 168, height: 44)
-                controlChrome(
-                    HStack(spacing: 4) {
-                        Text(stateName(model.selectedState)).font(.subheadline.weight(.semibold))
-                            .lineLimit(1).minimumScaleFactor(0.7)
-                        Image(systemName: "chevron.down").font(.caption2)
-                    }
-                    .padding(.horizontal, 16)
-                    .frame(height: 44)
-                )
+            // The label sizes to the area name, so "Texas" is short and "Massachusetts" is long.
+            HStack(spacing: 5) {
+                Text(stateName(model.selectedState)).font(.bt(.subheadline, .semibold))
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                Image(systemName: "chevron.down").font(.bt(.caption2, .semibold))
+                    .foregroundStyle(.secondary)
             }
-            .frame(width: 168, height: 44)
+            .foregroundStyle(Color.primary)
+            .padding(.leading, 12).padding(.trailing, 8)
+            .frame(height: 44)
+            .fixedSize()
+            .contentShape(Rectangle())
         }
         .accessibilityLabel("Switch coverage area, currently \(stateName(model.selectedState))")
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+        .tourTarget(.area)
+    }
+
+    // MARK: Tour
+
+    private var locationDisabledForDebug: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains("-disableLocation")
+        #else
+        false
+        #endif
+    }
+
+    /// Welcome dismissed: arm the map a beat later so a double tap on the button can't land
+    /// its second tap on the map.
+    private func beginTour() {
+        tour.begin()
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(600))
+            mapGesturesArmed = true
+        }
+    }
+
+    private func tourStepChanged() {
+        guard let step = tour.step else {
+            finishTour()
+            return
+        }
+        switch step {
+        case .welcome:
+            mapGesturesArmed = false
+            seedTourCamera()
+            fallthrough
+        case .tap, .numbers, .search, .coverage, .location:
+            // Every step after the card needs the map and its controls in view.
+            withAnimation(reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.86)) { expanded = false }
+            // A new area from the coverage step opens zoomed out. Tapping one precinct needs streets.
+            if step == .tap { seedTourCamera() }
+        case .card:
+            break
+        }
+    }
+
+    private func finishTour() {
+        hasOnboarded = true
+        sawTour = true
+        withAnimation(reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.86)) { expanded = false }
+        mapGesturesArmed = false
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(600))
+            mapGesturesArmed = true
+        }
+        // A replay never asks for location again. On first run, skipping the whole tour asks the
+        // usual way. Finishing it only starts updates the reader already allowed: the Locate step
+        // was their chance to ask, and "Not now" should mean not now.
+        guard !tour.isReplay, !locationDisabledForDebug else { return }
+        let status = CLLocationManager().authorizationStatus
+        if tour.outcome == .skippedAll || status == .authorizedWhenInUse || status == .authorizedAlways {
+            model.start()
+        }
+    }
+
+    /// Starts the tap step close enough to read streets, over real precincts. New York opens on
+    /// a Queens precinct, other areas on their main city.
+    private func seedTourCamera() {
+        guard model.selection == nil else { return }
+        let span = MKCoordinateSpan(latitudeDelta: 0.022, longitudeDelta: 0.022)
+        if model.selectedState == "NY",
+           let hit = PrecinctDB.shared.precinct(unitID: "36081-:-36081001322"),
+           let ring = hit.polygons.first?.exterior, !ring.isEmpty {
+            let lat = ring.map(\.latitude), lon = ring.map(\.longitude)
+            let center = CLLocationCoordinate2D(latitude: (lat.min()! + lat.max()!) / 2 - span.latitudeDelta * 0.13,
+                                                longitude: (lon.min()! + lon.max()!) / 2)
+            camera = .region(MKCoordinateRegion(center: center, span: span))
+        } else if let st = appStates.first(where: { $0.abbr == model.selectedState }) {
+            camera = .region(MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: st.lat, longitude: st.lon),
+                                                span: span))
+        }
+    }
+
+    /// VoiceOver path through each step. It calls the same model actions as the real controls.
+    private func performTourStep(_ step: OnboardingTour.Step) {
+        switch step {
+        case .tap:
+            if let c = visibleMapRegion?.center {
+                model.selectByTap(lat: c.latitude + (visibleMapRegion?.span.latitudeDelta ?? 0) * 0.13,
+                                  lon: c.longitude)
+            }
+        case .card:
+            withAnimation(reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.86)) { expanded.toggle() }
+        case .numbers: model.showFunFacts = true
+        case .search: model.showSearch = true
+        case .location:
+            model.recenterOnMe()
+            tour.next()
+        case .welcome, .coverage: break
+        }
     }
 
     private func beginSelectionFlight(to region: MKCoordinateRegion) {
@@ -439,9 +653,9 @@ struct ContentView: View {
 
     private func toastView(_ text: String) -> some View {
         Text(text)
-            .font(.caption).multilineTextAlignment(.center)
+            .font(.bt(.caption)).multilineTextAlignment(.center)
             .padding(.horizontal, 14).padding(.vertical, 8)
-            .background(.thinMaterial, in: Capsule())
+            .background(.thinMaterial, in: Brand.chipShape)
             .padding(.horizontal, 30)
             .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
             .onAppear {
@@ -506,25 +720,31 @@ private struct PrecinctMap: View {
                     ForEach(model.neighborPins) { pin in
                         ForEach(Array(pin.polygons.enumerated()), id: \.offset) { _, polygon in
                             MapPolygon(polygon.mapPolygon)
-                                .foregroundStyle(Palette.lean(pin.demShare).opacity(0.52 * leanTintIntensity))   // fill only — cheaper than per-precinct strokes
+                                .foregroundStyle(Palette.lean(pin.demShare).opacity(0.52 * leanTintIntensity * Brand.mapFill))   // fill only — cheaper than per-precinct strokes
                         }
                     }
                 }
                 ForEach(Array(model.selectedPolygons.enumerated()), id: \.offset) { _, polygon in
+                    // Fill only. MapKit strokes a polygon that has holes about twice as thick as
+                    // one without, so the outline is drawn below as one line per ring instead.
                     MapPolygon(polygon.mapPolygon)
-                        .foregroundStyle(Palette.lean(model.selection?.leanDemShare).opacity(0.62 * leanTintIntensity))
-                        .stroke(Palette.lean(model.selection?.leanDemShare), lineWidth: 2.5)
+                        .foregroundStyle(Palette.lean(model.selection?.leanDemShare).opacity(0.62 * leanTintIntensity * Brand.mapFill))
+                    ForEach(Array(([polygon.exterior] + polygon.interiors).enumerated()), id: \.offset) { _, ring in
+                        MapPolyline(coordinates: ring + ring.prefix(1))
+                            .stroke(Brand.mapStroke,
+                                    style: StrokeStyle(lineWidth: Brand.mapStrokeWidth, lineCap: .round, lineJoin: .round))
+                    }
                 }
                 if !showNeighbors, let c = model.selectionCoord {   // keep selection findable when zoomed out
                     Annotation("Selected precinct", coordinate: c) {
                         Image(systemName: "mappin.circle.fill")
-                            .font(.title2)
+                            .font(.bt(.title2))
                             .foregroundStyle(Palette.lean(model.selection?.leanDemShare))
                             .background(Circle().fill(.white).padding(2))
                     }
                 }
                 if let c = model.myCoord {
-                    // Slate ink, not system blue: on this map a saturated blue dot reads as
+                    // Ink, not system blue: on this map a saturated blue dot reads as
                     // "Democrat", so the you-marker wears the neutral accent instead.
                     Annotation("You", coordinate: c) {
                         ZStack {
@@ -580,18 +800,6 @@ private struct PrecinctMap: View {
 }
 
 // MARK: - Helpers
-
-extension Font {
-    /// Built-in SF Serif ("New York") display face. No font bundling.
-    /// `.system(size:)` fonts don't track Dynamic Type, so scale the point size with
-    /// UIFontMetrics (which reads the current traits during SwiftUI body eval and re-renders on
-    /// change). Capped at 1.4x so the fixed-height peek sheet can't overflow at accessibility sizes.
-    /// Upgrade path: per-call-site @ScaledMetric if a screen needs the full range.
-    static func serifDisplay(_ size: CGFloat, _ weight: Font.Weight) -> Font {
-        let scaled = min(UIFontMetrics.default.scaledValue(for: size), size * 1.4)
-        return .system(size: scaled, weight: weight, design: .serif)
-    }
-}
 
 extension MKCoordinateRegion {
     static let nyc = MKCoordinateRegion(

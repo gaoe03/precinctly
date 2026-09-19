@@ -17,7 +17,7 @@ public struct PrecinctPin: Identifiable, Sendable {
 public final class PrecinctDB {
     public static let shared = PrecinctDB()
 
-    private var db: OpaquePointer?
+    private(set) var db: OpaquePointer?
 
     private init() {
         guard let url = Bundle(for: PrecinctDB.self)
@@ -390,7 +390,10 @@ public final class PrecinctDB {
         let popSum = scalar("SELECT SUM(pop_total) FROM precincts WHERE \(scope) AND pop_total IS NOT NULL", scopeBinds)
         let totalPopulation = (popSum ?? 0) > 0 ? Int(popSum!) : nil
 
-        let avgDemShare = scalar("SELECT AVG(lean_dem_share) FROM precincts WHERE \(scope) AND lean_votes >= 100", scopeBinds)
+        // The area's two-party share: every precinct's latest presidential votes summed, not an
+        // average of precinct shares (Oregon's precinct average is R+3, its vote is D+17).
+        let pScope = county == nil ? "p.state = ?" : "p.state = ? AND p.borough = ?"
+        let avgDemShare = scalar(Self.votedShareSQL(pScope), scopeBinds)
 
         // True median income: count non-null rows, then take the middle one.
         let n = Int(scalar("SELECT COUNT(*) FROM precincts WHERE \(scope) AND income_median IS NOT NULL", scopeBinds) ?? 0)
@@ -425,6 +428,17 @@ public final class PrecinctDB {
                              leanBuckets: leanBuckets)
     }
 
+    /// Vote-weighted two-party Democratic share over each precinct's latest presidential election.
+    /// `scope` filters the precincts table aliased as `p`.
+    private static func votedShareSQL(_ scope: String) -> String {
+        """
+        SELECT SUM(e.dem) * 1.0 / NULLIF(SUM(e.dem + e.rep), 0)
+        FROM precincts p JOIN precinct_elections e
+          ON e.unit_id = p.unit_id AND e.office = 'president' AND e.year = p.lean_year
+        WHERE \(scope) AND e.dem IS NOT NULL AND e.rep IS NOT NULL
+        """
+    }
+
     /// Aggregate overview for a multi-jurisdiction coverage region. This deliberately uses
     /// unit-id prefixes from the region metadata rather than pretending the region is a state
     /// value in the database. It is safe for an older bundle with no matching rows, returning a
@@ -446,7 +460,8 @@ public final class PrecinctDB {
         let whereSQL = "(\(clauses))"
         let count = Int(scalar("SELECT COUNT(*) FROM precincts WHERE \(whereSQL)") ?? 0)
         let pop = scalar("SELECT SUM(pop_total) FROM precincts WHERE \(whereSQL) AND pop_total IS NOT NULL")
-        let avg = scalar("SELECT AVG(lean_dem_share) FROM precincts WHERE \(whereSQL) AND lean_votes >= 100")
+        let pClauses = region.jurisdictions.map { _ in "p.unit_id LIKE ?" }.joined(separator: " OR ")
+        let avg = scalar(Self.votedShareSQL("(\(pClauses))"))
         let n = Int(scalar("SELECT COUNT(*) FROM precincts WHERE \(whereSQL) AND income_median IS NOT NULL") ?? 0)
         let median: Int? = n == 0 ? nil : Int(scalar("SELECT income_median FROM precincts WHERE \(whereSQL) AND income_median IS NOT NULL ORDER BY income_median LIMIT 1 OFFSET \(n / 2)") ?? 0)
         var buckets: [String: Int] = [:]
