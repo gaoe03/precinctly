@@ -47,8 +47,9 @@ final class ShareCardUITests: XCTestCase {
         let locality = app.staticTexts["Profile locality"]
         XCTAssertTrue(locality.exists, "profile locality is missing from the expanded hero")
         let shareFrame = share.frame
-        XCTAssertGreaterThanOrEqual(shareFrame.width, 44, "share target is narrower than 44pt")
-        XCTAssertGreaterThanOrEqual(shareFrame.height, 44, "share target is shorter than 44pt")
+        // Frames arrive in floating point. A 44pt target can read 43.999999999999986.
+        XCTAssertGreaterThanOrEqual(shareFrame.width, 44 - 0.01, "share target is narrower than 44pt")
+        XCTAssertGreaterThanOrEqual(shareFrame.height, 44 - 0.01, "share target is shorter than 44pt")
         XCTAssertGreaterThanOrEqual(shareFrame.minY, collapse.frame.maxY,
                                     "share button protrudes above the profile content")
         XCTAssertLessThanOrEqual(shareFrame.maxX, app.windows.firstMatch.frame.maxX,
@@ -105,10 +106,12 @@ final class ShareCardUITests: XCTestCase {
         attach("share-sheet")
     }
 
-    /// Regression guard for the "See all" chip collapsing to "Se / e / all". The chip was the
-    /// only flexible thing in a fact row, so a long place name squeezed it until it wrapped
-    /// character by character. CA is the reproduction: its place strings are the longest.
-    func testSeeAllChipsNeverWrap() {
+    /// Regression guard for link text collapsing one word per line. The old "See all" chip was
+    /// the only flexible thing in a fact row, so a long place name squeezed it until it wrapped
+    /// character by character. The "See precincts" links replaced it, and each chart's extreme
+    /// place names now share a row in two equal columns. CA is the reproduction: its place
+    /// strings are the longest.
+    func testSeePrecinctsLinksAndExtremeNamesNeverSqueeze() {
         let app = XCUIApplication()
         app.launchArguments = ["-hasOnboarded", "YES", "-hapticsEnabled", "NO",
                                "-defaultState", "CA", "-disableLocation"]
@@ -118,23 +121,47 @@ final class ShareCardUITests: XCTestCase {
         XCTAssertTrue(byNumbers.waitForExistence(timeout: 20), "By the numbers button missing")
         byNumbers.tap()
 
-        let chips = app.staticTexts.matching(NSPredicate(format: "label == 'See all' OR label ENDSWITH 'precincts'"))
-        XCTAssertTrue(chips.firstMatch.waitForExistence(timeout: 15), "no See all chips on the page")
+        let links = app.buttons.matching(NSPredicate(format: "label == 'See precincts'"))
+        XCTAssertTrue(links.firstMatch.waitForExistence(timeout: 15), "no See precincts links on the page")
+        let extremes = app.buttons.matching(NSPredicate(format:
+            "label BEGINSWITH 'Highest, ' OR label BEGINSWITH 'Lowest, ' OR label BEGINSWITH 'Most ' "
+            + "OR label BEGINSWITH 'Least ' OR label BEGINSWITH 'Biggest swing ' OR label BEGINSWITH 'Smallest swing '"))
+        let windowWidth = app.windows.firstMatch.frame.width
 
-        // A chip on one line measures about 20pt. A wrapped one measured 26pt, which is the
-        // failure the friend hit, so 24 separates them with room to spare.
-        var worst: (label: String, height: CGFloat) = ("none", 0)
-        for _ in 0..<6 {
-            for i in 0..<chips.count {
-                let chip = chips.element(boundBy: i)
-                guard chip.exists, chip.frame.height > 0 else { continue }
-                if chip.frame.height > worst.height { worst = (chip.label, chip.frame.height) }
+        // A link on one line measures about 20pt. A wrapped one measured 26pt, so 24 separates
+        // them with room to spare. A place name may wrap to two lines of the column's own title
+        // size, and its column keeps close to half the row.
+        var worstLink: (label: String, height: CGFloat) = ("none", 0)
+        var worstName: (label: String, lines: CGFloat) = ("none", 0)
+        var narrowest: (label: String, width: CGFloat) = ("none", .greatestFiniteMagnitude)
+        var namesChecked = 0
+        for _ in 0..<14 {
+            for i in 0..<links.count {
+                let link = links.element(boundBy: i)
+                guard link.exists, link.frame.height > 0 else { continue }
+                if link.frame.height > worstLink.height { worstLink = (link.label, link.frame.height) }
+            }
+            for i in 0..<extremes.count {
+                let extreme = extremes.element(boundBy: i)
+                guard extreme.exists, extreme.frame.height > 0 else { continue }
+                let texts = extreme.staticTexts.allElementsBoundByIndex
+                guard let title = texts.first, let name = texts.last, texts.count >= 2,
+                      title.frame.height > 0 else { continue }
+                namesChecked += 1
+                let lines = name.frame.height / title.frame.height
+                if lines > worstName.lines { worstName = (name.label, lines) }
+                if extreme.frame.width < narrowest.width { narrowest = (extreme.label, extreme.frame.width) }
             }
             app.swipeUp()
         }
         attach("by-the-numbers")
-        XCTAssertLessThan(worst.height, 24,
-                          "chip '\(worst.label)' is \(worst.height)pt tall, so it wrapped onto multiple lines")
+        XCTAssertLessThan(worstLink.height, 24,
+                          "link '\(worstLink.label)' is \(worstLink.height)pt tall, so it wrapped onto multiple lines")
+        XCTAssertGreaterThan(namesChecked, 0, "no extreme place names on the page")
+        XCTAssertLessThanOrEqual(worstName.lines, 2.2,
+                                 "place '\(worstName.label)' spans \(worstName.lines) lines, so its column was squeezed")
+        XCTAssertGreaterThan(narrowest.width, windowWidth * 0.4,
+                             "extreme '\(narrowest.label)' is only \(narrowest.width)pt wide")
     }
 
     func testTopCodedIncomeAffordanceOpensTiedPrecinctProfile() {
@@ -147,29 +174,76 @@ final class ShareCardUITests: XCTestCase {
         XCTAssertTrue(byNumbers.waitForExistence(timeout: 20), "By the numbers button missing")
         byNumbers.tap()
 
-        let highestIncome = app.buttons["Highest income leaderboard"]
-        for _ in 0..<5 where !highestIncome.exists { app.swipeUp() }
+        // The income chart's Highest end names the tie instead of one arbitrary precinct.
+        let highestIncome = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH 'Highest, $250k+'")
+        ).firstMatch
+        for _ in 0..<10 where !highestIncome.isHittable { app.swipeUp() }
         XCTAssertTrue(highestIncome.waitForExistence(timeout: 10),
                       "highest-income tie affordance missing")
         XCTAssertTrue(highestIncome.label.contains("166 precincts tied"),
-                      "highest-income affordance does not expose the true tie count")
+                      "highest-income affordance does not expose the true tie count: \(highestIncome.label)")
         highestIncome.tap()
 
-        XCTAssertTrue(app.navigationBars["Highest income"].waitForExistence(timeout: 10),
-                      "income leaderboard did not open")
-        XCTAssertTrue(app.staticTexts["166 precincts tie at $250k+"].waitForExistence(timeout: 10),
-                      "complete tie-group header missing")
-
+        XCTAssertTrue(app.staticTexts["All precincts, highest first"].waitForExistence(timeout: 10),
+                      "the tie did not open the ranked list")
         let precinct = app.buttons.matching(
-            NSPredicate(format: "identifier BEGINSWITH 'Income tied precinct '")
+            NSPredicate(format: "label ENDSWITH ', $250k+'")
         ).firstMatch
         XCTAssertTrue(precinct.waitForExistence(timeout: 10), "no tied precinct row is tappable")
+        attach("income-tie-list")
         precinct.tap()
 
         let hero = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label CONTAINS 'Political lean'"))
             .firstMatch
         XCTAssertTrue(hero.waitForExistence(timeout: 15), "tied precinct did not open its profile")
+    }
+
+    /// A tie at a chart's end must open the full ranking even when the reader has a precinct
+    /// selected. "See precincts" opens on the reader's own bar, and the tie link once did the
+    /// same, which hid every tied precinct behind an unrelated bar.
+    func testTiedExtremeOpensFullRankingWithAPrecinctSelected() {
+        for testCase in [(prefix: "Highest, $250k+", value: "$250k+"),
+                         (prefix: "Most Democratic, D+96", value: "D+96")] {
+            let app = XCUIApplication()
+            // Queens 1320 sits in the $75k to 100k income bar and the Even lean bar, so neither
+            // tie is in the selected precinct's own bar.
+            app.launchArguments = ["-hasOnboarded", "YES", "-hapticsEnabled", "NO",
+                                   "-defaultState", "NY", "-disableLocation",
+                                   "-testUnitID", "36081-:-36081001320"]
+            app.launch()
+
+            let hero = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "label CONTAINS 'Political lean'")).firstMatch
+            XCTAssertTrue(hero.waitForExistence(timeout: 30), "no precinct was selected")
+            let byNumbers = app.buttons["By the numbers"]
+            XCTAssertTrue(byNumbers.waitForExistence(timeout: 10), "By the numbers button missing")
+            byNumbers.tap()
+
+            let tie = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", testCase.prefix)).firstMatch
+            for _ in 0..<10 where !tie.isHittable { app.swipeUp() }
+            XCTAssertTrue(tie.waitForExistence(timeout: 10), "'\(testCase.prefix)' end missing")
+            XCTAssertTrue(tie.label.contains("precincts tied"), "'\(testCase.prefix)' is not a tie: \(tie.label)")
+            tie.tap()
+
+            XCTAssertTrue(app.staticTexts["All precincts, highest first"].waitForExistence(timeout: 10),
+                          "the tie opened a filtered list instead of the full ranking")
+            let rows = app.buttons.matching(NSPredicate(format: "label ENDSWITH %@", ", \(testCase.value)"))
+            XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 10),
+                          "no row shows the tied value \(testCase.value)")
+            let header = app.staticTexts["All precincts, highest first"]
+            // Rows read "Precinct 1146, Queens, value", with a leading rank only when values
+            // differ. The map controls stay in the tree under the cover, so match the row shape.
+            let firstRow = app.buttons.matching(NSPredicate(format: "label MATCHES %@", "(\\d+, )?Precinct [^,]+, [^,]+, .+"))
+                .allElementsBoundByIndex
+                .filter { $0.frame.minY >= header.frame.maxY - 1 && $0.frame.height > 0 }
+                .min { $0.frame.minY < $1.frame.minY }
+            XCTAssertTrue(firstRow?.label.hasSuffix(", \(testCase.value)") == true,
+                          "first row is not a tied precinct: \(firstRow?.label ?? "none")")
+            attach("tie-with-selection-\(testCase.value)")
+            app.terminate()
+        }
     }
 
     /// Apple Maps puts Midway City's representative point in a sub-meter seam between public
@@ -206,9 +280,8 @@ final class ShareCardUITests: XCTestCase {
         attach("midway-search")
     }
 
-    /// The visible coverage capsule follows its label inside a stable, centered Menu host. The
-    /// stable host prevents a long label from being clipped to a previous short label's rectangle
-    /// while the menu dismisses.
+    /// The coverage selector hugs its label, so its width follows the area name. Every area must
+    /// still show its full name at the full tap height without running into the controls beside it.
     func testCoverageAreaSwitchKeepsSelectorFrame() {
         let app = XCUIApplication()
         app.launchArguments = ["-hasOnboarded", "YES", "-hapticsEnabled", "NO",
@@ -219,7 +292,6 @@ final class ShareCardUITests: XCTestCase {
             NSPredicate(format: "label BEGINSWITH 'Switch coverage area'")
         ).firstMatch
         XCTAssertTrue(switcher.waitForExistence(timeout: 15), "coverage area selector missing")
-        let windowMidX = app.windows.firstMatch.frame.midX
         let byNumbers = app.buttons["By the numbers"]
         let settings = app.buttons["Settings"]
         XCTAssertTrue(byNumbers.exists, "By the Numbers control missing")
@@ -236,10 +308,6 @@ final class ShareCardUITests: XCTestCase {
                            "coverage area selector truncated '\(name)'")
             XCTAssertEqual(selectedSwitcher.frame.height, 44, accuracy: 1,
                            "selector tap height changed for '\(name)'")
-            XCTAssertEqual(selectedSwitcher.frame.width, 168, accuracy: 1,
-                           "stable selector host changed width for '\(name)'")
-            XCTAssertEqual(selectedSwitcher.frame.midX, windowMidX, accuracy: 1,
-                           "selector stopped being centered for '\(name)'")
             XCTAssertFalse(selectedSwitcher.frame.intersects(byNumbers.frame),
                            "selector host overlaps the By the Numbers control for '\(name)'")
             XCTAssertFalse(selectedSwitcher.frame.intersects(settings.frame),
@@ -328,11 +396,14 @@ final class ShareCardUITests: XCTestCase {
             attach("\(testCase.state.lowercased())-profile")
 
             app.buttons["By the numbers"].tap()
-            XCTAssertTrue(app.staticTexts["All of \(testCase.stateName)"].waitForExistence(timeout: 15),
+            // The area is the page title, and tapping it opens the county picker.
+            XCTAssertTrue(app.buttons["By the Numbers, \(testCase.stateName)"].waitForExistence(timeout: 15),
                           "\(testCase.stateName) By the Numbers scope missing")
-            XCTAssertTrue(app.staticTexts["Politics"].exists, "\(testCase.stateName) political facts missing")
-            XCTAssertTrue(app.staticTexts["Race & demographics"].exists,
-                          "\(testCase.stateName) demographic facts missing")
+            XCTAssertTrue(app.staticTexts["Politics"].waitForExistence(timeout: 15),
+                          "\(testCase.stateName) political facts missing")
+            let demographics = app.staticTexts["Who lives here"]
+            for _ in 0..<6 where !demographics.exists { app.swipeUp() }
+            XCTAssertTrue(demographics.exists, "\(testCase.stateName) demographic facts missing")
             attach("\(testCase.state.lowercased())-by-the-numbers")
             app.terminate()
         }
@@ -379,7 +450,10 @@ final class ShareCardUITests: XCTestCase {
         let settings = app.buttons["Settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 15), "settings button missing")
         settings.tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10), "settings did not open")
+        // The About section sits below the fold, and the list only builds rows near the screen.
         let sources = app.buttons["Sources and licenses"]
+        for _ in 0..<5 where !sources.isHittable { app.swipeUp() }
         XCTAssertTrue(sources.waitForExistence(timeout: 10), "sources link missing")
         sources.tap()
 
@@ -447,14 +521,14 @@ final class ShareCardUITests: XCTestCase {
     }
 
     /// Requested: compare a precinct to the places around it, not just to the whole state.
-    /// The thing worth protecting is that the "vs X" caption always names the area actually
-    /// used, so switching the menu has to move the labels with it.
+    /// The thing worth protecting is that the "vs X" chip always names the area actually used,
+    /// so switching the menu has to move the chip and the numbers with it.
     func testComparisonAreaSwitchesTheDeltaLabels() {
         let app = XCUIApplication()
         // Deliberately NOT seeding "-comparisonArea": a launch argument lands in NSArgumentDomain,
         // which outranks anything the app writes to UserDefaults, so the preference would be
         // frozen at the seeded value and the feature would look broken. The test drives the menu
-        // in both directions instead, which is also the more honest exercise.
+        // in every direction instead, which is also the more honest exercise.
         app.launchArguments = ["-hasOnboarded", "YES", "-hapticsEnabled", "NO",
                                "-defaultState", "NY", "-disableLocation",
                                "-testUnitID", "36081-:-36081001320"]
@@ -468,35 +542,61 @@ final class ShareCardUITests: XCTestCase {
         let menu = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Compare against'")).firstMatch
         XCTAssertTrue(menu.waitForExistence(timeout: 5), "no comparison menu on the money section")
 
-        // Queens is a NYC borough, so this precinct should offer all three areas.
+        // Queens is a NYC borough, so this precinct should offer all three areas. Each item is the
+        // full name with its kind under it.
+        let queens = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Queens'")).firstMatch
+        let city = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'New York City'")).firstMatch
+        let state = app.buttons.matching(
+            NSPredicate(format: "label == 'New York' OR label BEGINSWITH 'New York, '")
+        ).firstMatch
         menu.tap()
-        XCTAssertTrue(app.buttons["Queens"].waitForExistence(timeout: 5), "county option missing from the menu")
-        XCTAssertTrue(app.buttons["NYC"].exists, "NYC option missing for a borough precinct")
-        XCTAssertTrue(app.buttons["NY"].exists, "state option missing")
-        app.buttons["NY"].tap()
+        XCTAssertTrue(queens.waitForExistence(timeout: 5), "county option missing from the menu")
+        XCTAssertTrue(city.exists, "NYC option missing for a borough precinct")
+        XCTAssertTrue(state.exists, "state option missing")
+        attach("compare-menu")
+        state.tap()
 
-        XCTAssertTrue(app.staticTexts["vs NY"].waitForExistence(timeout: 5), "menu did not settle on the state")
-        XCTAssertTrue(deltaLabels(app).allSatisfy { $0.hasSuffix("vs NY") },
-                      "state deltas should read 'vs NY', got \(deltaLabels(app))")
-        let stateDeltas = deltaLabels(app)
+        let stateDeltas = settledDeltas(app, menu: menu, area: "NY")
         attach("compare-state")
 
         menu.tap()
-        app.buttons["Queens"].tap()
-
-        XCTAssertTrue(app.staticTexts["vs Queens"].waitForExistence(timeout: 5), "menu label did not follow the choice")
-        let after = deltaLabels(app)
-        XCTAssertFalse(after.isEmpty, "no deltas rendered after switching")
-        XCTAssertTrue(after.allSatisfy { $0.hasSuffix("vs Queens") },
-                      "deltas should name the area actually used, got \(after)")
-        XCTAssertNotEqual(after, stateDeltas, "the numbers should change, not just the label")
+        XCTAssertTrue(queens.waitForExistence(timeout: 5), "county option missing on reopen")
+        queens.tap()
+        let countyDeltas = settledDeltas(app, menu: menu, area: "Queens")
+        XCTAssertNotEqual(countyDeltas, stateDeltas, "the numbers should change, not just the label")
         attach("compare-county")
+
+        menu.tap()
+        XCTAssertTrue(city.waitForExistence(timeout: 5), "NYC option missing on reopen")
+        city.tap()
+        let cityDeltas = settledDeltas(app, menu: menu, area: "NYC")
+        XCTAssertNotEqual(cityDeltas, countyDeltas, "the numbers should change, not just the label")
+        attach("compare-city")
     }
 
-    /// The "+$12k vs TX" style captions under the money and education stats.
-    private func deltaLabels(_ app: XCUIApplication) -> [String] {
-        app.staticTexts.matching(NSPredicate(format: "label MATCHES '^[+−-].* vs .*'"))
-            .allElementsBoundByIndex.map(\.label)
+    /// Waits for the chip to name `area`, then returns the income and college deltas. The chip
+    /// names the area, so the deltas themselves are bare ("+$12k", "−31 pts").
+    private func settledDeltas(_ app: XCUIApplication, menu: XCUIElement, area: String,
+                               file: StaticString = #filePath, line: UInt = #line) -> [String] {
+        let settled = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "Compare against, currently \(area)"), object: menu)
+        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed,
+                       "chip did not follow the choice: \(menu.label)", file: file, line: line)
+        XCTAssertTrue(app.staticTexts["vs \(area)"].exists, "chip text does not read 'vs \(area)'",
+                      file: file, line: line)
+        // Let the numeric content transition finish before reading the values.
+        sleep(1)
+        let deltas = ["Median income", "College degree"].map { name -> String in
+            let stat = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", name)).firstMatch
+            XCTAssertTrue(stat.exists, "\(name) stat missing", file: file, line: line)
+            let delta = stat.label.components(separatedBy: ", ").last ?? ""
+            XCTAssertNotNil(delta.range(of: "^[+−-]", options: .regularExpression),
+                            "\(name) has no delta vs \(area): \(stat.label)", file: file, line: line)
+            XCTAssertFalse(delta.contains("vs"), "\(name) delta still names the area: \(delta)",
+                           file: file, line: line)
+            return delta
+        }
+        return deltas
     }
 
     private func attach(_ name: String) {

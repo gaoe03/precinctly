@@ -10,9 +10,9 @@ import PrecinctKit
 // profile underneath, so the card answers "where is this" before "what is it like".
 //
 // Two rules this view exists to hold:
-//  1. Fixed geometry. Sizes are raw point values, never Dynamic-Type-scaled (`Font.serifDisplay`
-//     scales, `.system(size:)` does not). The recipient's text-size setting must not change an
-//     image the sender already sent. `.environment(\.dynamicTypeSize, .large)` pins the rest.
+//  1. Fixed geometry. Sizes are raw point values (`Brand.textFixed`, `Brand.displayFont`), never
+//     Dynamic-Type-scaled. The recipient's text-size setting must not change an image the sender
+//     already sent. `.environment(\.dynamicTypeSize, .large)` pins the rest.
 //  2. Explicit appearance. The exported card follows the app's resolved light or dark mode with
 //     fixed palettes, so its colors do not depend on the renderer's process-wide UIKit traits.
 
@@ -29,7 +29,7 @@ struct ShareCard: View {
     static let mapSize = CGSize(width: 400, height: 224)
 
     private var election: ShareCardElectionPresentation {
-        ShareCardElectionPresentation(profile: profile)
+        ShareCardElectionPresentation(profile: profile, trend: trend)
     }
 
     private var lean: Color {
@@ -49,7 +49,10 @@ struct ShareCard: View {
                 headline.padding(.top, 12)
                 if let share = election.voteShare { vote(share).padding(.top, 12) }
                 if trend.count >= 2 {
-                    section("Presidential trajectory") {
+                    section("Politics") {
+                        Text("Presidential margin by year")
+                            .font(Brand.textFixed(12, .bold))
+                            .foregroundStyle(paper.ink)
                         TrajectoryStrip(trend: trend, colorScheme: colorScheme)
                     }
                 }
@@ -86,11 +89,11 @@ struct ShareCard: View {
     private var place: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(precinctHeadline(profile))
-                .font(.system(size: 16, weight: .semibold))
+                .font(Brand.textFixed(16, .semibold))
                 .foregroundStyle(paper.ink)
                 .lineLimit(1).minimumScaleFactor(0.7)
-            Text("\(countyDisplay(profile.borough)), \(profile.state)")
-                .font(.system(size: 12.5))
+            Text(precinctArea(profile))
+                .font(Brand.textFixed(12.5, .regular))
                 .foregroundStyle(paper.muted)
                 .lineLimit(1).minimumScaleFactor(0.7)
         }
@@ -101,12 +104,12 @@ struct ShareCard: View {
     private var headline: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(election.headline)
-                .font(.system(size: 46, weight: .heavy, design: .serif))
+                .font(Brand.displayFont(46, .heavy))
                 .foregroundStyle(lean)
                 .lineLimit(1).minimumScaleFactor(0.5)
             if let detail = election.detail {
                 Text(detail)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(Brand.textFixed(14, .semibold))
                     .foregroundStyle(lean)
             }
         }
@@ -120,18 +123,16 @@ struct ShareCard: View {
                 Spacer(minLength: 8)
                 Text("\(Fmt.pct(1 - share)) Rep").foregroundStyle(paper.partisanText(0.1))
             }
-            .font(.system(size: 12, weight: .semibold))
+            .font(Brand.textFixed(12, .semibold))
             // The same honesty caveat the sheet and the widgets carry: a handful of ballots can
             // read R+100, so the card never lets the giant number stand alone.
             if let v = profile.leanVotes, v < 100 {
                 Text("Based on only \(v) vote\(v == 1 ? "" : "s") cast")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(Brand.textFixed(11, .semibold))
                     .foregroundStyle(paper.muted)
-            } else if let t = profile.turnoutEst, t <= 1.05 {
-                Text("\(Fmt.pct(min(t, 1))) turnout"
-                     + (profile.leanYear.map { " in \($0)" } ?? "")
-                     + (profile.leanVotes.map { " from \(Fmt.compact($0)) votes" } ?? ""))
-                    .font(.system(size: 11))
+            } else if let line = votesLine(profile, compact: Fmt.compact) {
+                Text(line)
+                    .font(Brand.textFixed(11, .regular))
                     .foregroundStyle(paper.muted)
             }
         }
@@ -142,9 +143,10 @@ struct ShareCard: View {
     private func section<C: View>(_ title: String, @ViewBuilder content: () -> C) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(.system(size: 13, weight: .semibold, design: .serif))
+                .font(Brand.displayFont(15, .bold))
                 .foregroundStyle(paper.ink)
-            Rectangle().fill(paper.rule).frame(height: 1)
+            // Title over a rule, the same header as the card in the app.
+            Rectangle().fill(paper.ink.opacity(0.85)).frame(height: 1.5)
             content()
         }
         .padding(.top, 13)
@@ -159,18 +161,19 @@ struct ShareCard: View {
             ForEach(Array(raceRows.enumerated()), id: \.element.label) { idx, item in
                 HStack(spacing: 8) {
                     Text(item.label)
-                        .font(.system(size: 12))
+                        .font(Brand.textFixed(13.5, .regular))
                         .foregroundStyle(paper.ink)
-                        .frame(width: 74, alignment: .leading)
-                        .lineLimit(1).minimumScaleFactor(0.7)
+                        .lineLimit(1)
+                        .fixedSize()
+                        .frame(width: 96, alignment: .leading)
                     GeometryReader { geo in
                         Rectangle().fill(paper.rankTint(idx))
                             .frame(width: max(3, geo.size.width * min(1, item.value)))
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .frame(height: 6)
+                    .frame(height: 8)
                     Text(Fmt.pct(item.value))
-                        .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                        .font(Brand.textFixed(13.5, .semibold).monospacedDigit())
                         .foregroundStyle(paper.ink)
                         .frame(width: 38, alignment: .trailing)
                 }
@@ -179,19 +182,22 @@ struct ShareCard: View {
             // 100%. Saying so is the difference between a card and a misleading card.
             if raceRows.reduce(0.0, { $0 + $1.value }) > 1.001 {
                 Text("Census counts race and Hispanic origin separately, so shares can total over 100%.")
-                    .font(.system(size: 9))
+                    .font(Brand.textFixed(7.5, .regular))
                     .foregroundStyle(paper.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 
+    // Same three columns as People and housing, so College degree lines up with Density.
     private var money: some View {
-        HStack(alignment: .top, spacing: 12) {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .topLeading), count: 3),
+                  alignment: .leading, spacing: 12) {
             stat(profile.incomeMedian.map { Fmt.incomeTopCoded($0) }, "Median income",
-                 Delta.money(profile.incomeMedian, baseline?.incomeMedian, baseline?.displayName ?? profile.state))
+                 Delta.money(profile.incomeMedian, baseline?.incomeMedian, baseline?.readerName ?? profile.state), large: true)
+            Color.clear.frame(height: 1)
             stat(profile.pctBachelorsOrHigher.map { Fmt.pct($0) }, "College degree",
-                 Delta.points(profile.pctBachelorsOrHigher, baseline?.pctBachelorsOrHigher, baseline?.displayName ?? profile.state))
+                 Delta.points(profile.pctBachelorsOrHigher, baseline?.pctBachelorsOrHigher, baseline?.readerName ?? profile.state), large: true)
         }
     }
 
@@ -200,25 +206,25 @@ struct ShareCard: View {
                   alignment: .leading, spacing: 12) {
             stat(profile.popTotal.map { Fmt.compact($0) }, "Population", nil)
             stat(profile.avgAge.map { String(Int($0.rounded())) }, "Median age", nil)
-            stat(profile.popDensity.map { "\(Fmt.compact(Int($0)))/mi²" }, "Density", nil)
+            stat(profile.popDensity.map { "\(Metric.density.format($0))/mi²" }, "Density", nil)
             stat(profile.pctRenter.map { Fmt.pct($0) }, "Renters", nil)
             stat(profile.pctOwner.map { Fmt.pct($0) }, "Owners", nil)
         }
     }
 
-    private func stat(_ value: String?, _ label: String, _ delta: (String, Bool)?) -> some View {
+    private func stat(_ value: String?, _ label: String, _ delta: (String, Bool)?, large: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(value ?? "—")
-                .font(.system(size: 18, weight: .semibold, design: .serif)).monospacedDigit()
+                .font(Brand.figureFont(large ? 22 : 16, .semibold)).monospacedDigit()
                 .foregroundStyle(paper.ink)
                 .lineLimit(1).minimumScaleFactor(0.6)
             Text(label)
-                .font(.system(size: 10.5))
+                .font(Brand.textFixed(11.5, .regular))
                 .foregroundStyle(paper.muted)
                 .lineLimit(1).minimumScaleFactor(0.7)
             if let delta {
                 Text(delta.0)
-                    .font(.system(size: 10, weight: .bold))
+                    .font(Brand.textFixed(10, .bold))
                     .foregroundStyle(delta.1 ? paper.up : paper.down)
                     .lineLimit(1).minimumScaleFactor(0.7)
             }
@@ -226,26 +232,22 @@ struct ShareCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// The wordmark, with the source note under it in the app's note style.
     private var footer: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            // The wordmark is the one piece of branding on the card, and it was reading as
-            // smaller than the stat labels above it. Big enough to be the signature, still
-            // quieter than any number.
+        VStack(alignment: .leading, spacing: 3) {
             Text("Precinctly")
-                .font(.system(size: 17, weight: .semibold, design: .serif))
+                .font(Brand.displayFont(17, .semibold))
                 .foregroundStyle(paper.ink)
-            Spacer(minLength: 4)
             Text(election.footer)
-                .font(.system(size: 9))
+                .font(Brand.textFixed(8.5, .regular))
                 .foregroundStyle(paper.muted)
-                .lineLimit(1).minimumScaleFactor(0.7)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// The card stock.
-    static let paperStock = Color(red: 0.961, green: 0.953, blue: 0.933)
 
-    /// Fixed export palettes. Light values are unchanged from the original card.
+    /// Fixed export palettes for light and dark.
     fileprivate struct Paper {
         let colorScheme: ColorScheme
         let stock: Color
@@ -258,42 +260,21 @@ struct ShareCard: View {
 
         init(colorScheme: ColorScheme) {
             self.colorScheme = colorScheme
-            if colorScheme == .dark {
-                stock = Color(red: 0.075, green: 0.082, blue: 0.102)
-                rule = Color(red: 0.267, green: 0.278, blue: 0.314)
-                ink = Color(red: 0.925, green: 0.918, blue: 0.890)
-                muted = Color(red: 0.675, green: 0.686, blue: 0.725)
-                up = Color(red: 0.36, green: 0.76, blue: 0.47)
-                down = Color(red: 0.94, green: 0.58, blue: 0.24)
-                rankBase = Color(red: 0.62, green: 0.66, blue: 0.82)
-            } else {
-                stock = ShareCard.paperStock
-                rule = Color(red: 0.804, green: 0.792, blue: 0.757)
-                ink = Color(red: 0.129, green: 0.145, blue: 0.184)
-                muted = Color(red: 0.416, green: 0.427, blue: 0.459)
-                up = Color(red: 0.13, green: 0.45, blue: 0.24)
-                down = Color(red: 0.70, green: 0.36, blue: 0.06)
-                rankBase = Color(red: 0.36, green: 0.40, blue: 0.58)
-            }
+            let dark = colorScheme == .dark
+            stock = dark ? Color(white: 0.06) : .white
+            rule = dark ? Color(white: 1, opacity: 0.22) : Color(white: 0.07, opacity: 0.16)
+            ink = dark ? Color(white: 0.95) : Color(white: 0.07)
+            muted = dark ? Color(white: 0.64) : Color(white: 0.40)
+            up = dark ? Color(red: 0.36, green: 0.76, blue: 0.47) : Color(red: 0.12, green: 0.50, blue: 0.24)
+            down = dark ? Color(red: 0.94, green: 0.58, blue: 0.24) : Color(red: 0.70, green: 0.33, blue: 0.0)
+            rankBase = dark ? Color(white: 0.72) : Color(white: 0.12)
         }
 
         func rankTint(_ rank: Int) -> Color {
             rankBase.opacity(max(0.35, 1.0 - Double(rank) * 0.16))
         }
 
-        func partisanText(_ share: Double) -> Color {
-            guard colorScheme == .dark else { return Palette.lean(share) }
-            let red = (0.98, 0.38, 0.38), purple = (0.77, 0.51, 0.94), blue = (0.38, 0.65, 1.0)
-            let t = max(0, min(1, share))
-            let start = t >= 0.5 ? purple : red
-            let end = t >= 0.5 ? blue : purple
-            let amount = t >= 0.5 ? (t - 0.5) * 2 : t * 2
-            return Color(
-                red: start.0 + (end.0 - start.0) * amount,
-                green: start.1 + (end.1 - start.1) * amount,
-                blue: start.2 + (end.2 - start.2) * amount
-            )
-        }
+        func partisanText(_ share: Double) -> Color { Palette.lean(share) }
     }
 }
 
@@ -321,9 +302,8 @@ private struct TrajectoryStrip: View {
             ZStack {
                 ForEach(Array(trend.enumerated()), id: \.offset) { i, e in
                     let s = e.demShare ?? 0.5
-                    let yEven = py(0.5), yVal = py(s), up = s >= 0.5
-                    UnevenRoundedRectangle(topLeadingRadius: up ? 3 : 0, bottomLeadingRadius: up ? 0 : 3,
-                                           bottomTrailingRadius: up ? 0 : 3, topTrailingRadius: up ? 3 : 0)
+                    let yEven = py(0.5), yVal = py(s)
+                    Rectangle()
                         .fill(Palette.lean(s))
                         .frame(width: barW, height: max(2, abs(yVal - yEven)))
                         .position(x: px(i), y: (yEven + yVal) / 2)
@@ -339,11 +319,11 @@ private struct TrajectoryStrip: View {
                     let s = e.demShare ?? 0.5
                     let yVal = py(s)
                     Text(margin(s))
-                        .font(.system(size: 9.5, weight: .bold))
+                        .font(Brand.textFixed(11, .bold))
                         .foregroundStyle(paper.partisanText(s))
                         .position(x: px(i), y: s >= 0.5 ? max(7, yVal - 8) : min(yVal + 8, h - 18))
                     Text(String(e.year))
-                        .font(.system(size: 9.5))
+                        .font(Brand.textFixed(11, .regular))
                         .foregroundStyle(paper.muted)
                         .position(x: px(i), y: h - 5)
                 }
@@ -436,11 +416,11 @@ enum ShareCardRenderer {
     }
 
     /// Writes a named PNG rather than passing a bare UIImage around: the file arrives called
-    /// "Precinct 1320, Queens NY.png" instead of the recipient's generic image name, and Save
+    /// "Precinct 1320, Queens, NY.png" instead of the recipient's generic image name, and Save
     /// can reuse the same bytes instead of re-encoding.
     static func write(_ image: UIImage, for profile: PrecinctProfile) -> URL? {
         guard let png = image.pngData() else { return nil }
-        let name = "\(precinctHeadline(profile)), \(countyDisplay(profile.borough)) \(profile.state)"
+        let name = "\(precinctHeadline(profile)), \(precinctArea(profile))"
         let safe = name.components(separatedBy: CharacterSet(charactersIn: "/\\:?%*|\"<>")).joined()
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(safe.isEmpty ? "Precinct" : safe)
@@ -463,15 +443,23 @@ struct ShareCardButton: View {
     var body: some View {
         Button { showPreview = true } label: {
             Image(systemName: "square.and.arrow.up")
-                .font(.system(size: 15, weight: .semibold))
+                .font(Brand.textFixed(15, .semibold))
                 .foregroundStyle(.secondary)
-                .frame(width: 34, height: 34)
-                .background(Circle().fill(Color(.secondarySystemBackground)))
+                .frame(width: 36, height: 36)
+                .background(Brand.iconShape.fill(Color(.tertiarySystemFill)))
         }
         .frame(width: 44, height: 44)
         .contentShape(Rectangle())
         .buttonStyle(.plain)
         .accessibilityLabel("Share this precinct")
+        #if DEBUG
+        .task {   // screenshot capture
+            if ProcessInfo.processInfo.arguments.contains("-openShare") {
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                showPreview = true
+            }
+        }
+        #endif
         .sheet(isPresented: $showPreview) {
             ShareCardPreview(profile: profile, polygons: polygons, trend: trend, baseline: baseline)
         }

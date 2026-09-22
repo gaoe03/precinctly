@@ -144,7 +144,7 @@ struct PrecinctWidget: Widget {
                 .padding(EdgeInsets(top: 18, leading: 20, bottom: 18, trailing: 20))
                 .containerBackground(WidgetColor.mapTone, for: .widget)
         }
-        // Margins are ours so the ledger rules can run edge to edge like a printed sheet.
+        // Margins are ours so the row rules can run edge to edge.
         .contentMarginsDisabled()
         .configurationDisplayName("Precinctly")
         .description("The political lean and demographics of where you are.")
@@ -153,8 +153,10 @@ struct PrecinctWidget: Widget {
 }
 
 struct PrecinctHomeView: View {
-    @Environment(\.widgetFamily) private var family
+    @Environment(\.widgetFamily) private var envFamily
     let entry: PrecinctEntry
+    var familyOverride: WidgetFamily? = nil
+    private var family: WidgetFamily { familyOverride ?? envFamily }
 
     var body: some View {
         if let p = entry.profile {
@@ -168,14 +170,8 @@ struct PrecinctHomeView: View {
         }
     }
 
-    /// Ledger rule: a hairline that runs edge to edge (margins are disabled at the config
-    /// level, so the negative padding reaches the widget's true edges).
-    private func ledgerRule(inset: CGFloat = -20) -> some View {
-        Rectangle().fill(WidgetColor.rule).frame(height: 1).padding(.horizontal, inset)
-    }
-
     private func placeLine(_ p: PrecinctProfile) -> String {
-        "\(precinctHeadline(p)), \(countyDisplay(p.borough)) \(p.state)"
+        "\(precinctHeadline(p)), \(precinctArea(p))"
     }
 
     /// When this entry was built. A location widget can sit on a stale precinct if the last
@@ -193,23 +189,22 @@ struct PrecinctHomeView: View {
 
     private func updatedView(_ e: PrecinctEntry, size: CGFloat) -> some View {
         Text(agoText(e))
-            .font(.system(size: size))
-            .foregroundStyle(.tertiary)
+            .font(Brand.textFixed(size, .regular))
+            .foregroundStyle(.secondary)
             .lineLimit(1)
             .minimumScaleFactor(0.6)
     }
 
     /// Every reading the layouts draw from, widest first. One list so small, medium and large
     /// report the same facts and differ only in how many of them fit.
-    /// `namesArea` false where the cell is too narrow to hold "Income vs Orange" without
-    /// truncating, in which case the caller names the area somewhere with room.
     private func stats(_ p: PrecinctProfile, _ base: Baseline?, namesArea: Bool = true) -> [(String, String)] {
-        [p.incomeMedian.map { (moneyShort($0), (namesArea ? base.map { "Income vs \($0.displayName)" } : nil) ?? "Income") },
-         p.pctBachelorsOrHigher.map { (pctStr($0), "College") },
+        // Same values and labels as the card, so a precinct reads the same everywhere.
+        [p.incomeMedian.map { (moneyFull($0), "Median income") },
+         p.pctBachelorsOrHigher.map { (pctStr($0), "College degree") },
          p.avgAge.map { (String(Int($0.rounded())), "Median age") },
          p.pctRenter.map { (pctStr($0), "Renters") },
-         p.popTotal.map { (compactNum($0), "People") },
-         p.popDensity.map { ("\(compactNum(Int($0)))/mi²", "Density") }].compactMap { $0 }
+         p.popTotal.map { (compactNum($0), "Population") },
+         p.popDensity.map { ("\(Metric.density.format($0))/mi²", "Density") }].compactMap { $0 }
     }
 
     private func statGrid(_ p: PrecinctProfile, _ e: PrecinctEntry,
@@ -232,14 +227,14 @@ struct PrecinctHomeView: View {
     private func small(_ p: PrecinctProfile, _ e: PrecinctEntry) -> some View {
         let lean = WidgetColor.lean(p.leanDemShare)
         return VStack(alignment: .leading, spacing: 0) {
-            Text(placeLine(p)).font(.system(size: 9, weight: .semibold))
+            Text(placeLine(p)).font(Brand.textFixed(9, .semibold))
                 .lineLimit(1).minimumScaleFactor(0.6)
-            ledgerRule().padding(.top, 3).padding(.bottom, 4)
+            Spacer().frame(height: 7)
             HStack(alignment: .firstTextBaseline, spacing: 5) {
-                Text(p.leanShort).font(.system(size: 26, weight: .heavy, design: .serif))
+                Text(p.leanShort).font(Brand.displayFont(26, .heavy))
                     .foregroundStyle(lean).lineLimit(1).minimumScaleFactor(0.5)
                 if let label = p.leanLabel {
-                    Text(label).font(.system(size: 8, weight: .semibold))
+                    Text(label).font(Brand.textFixed(8, .semibold))
                         .foregroundStyle(lean).lineLimit(1).minimumScaleFactor(0.6)
                 }
             }
@@ -254,13 +249,13 @@ struct PrecinctHomeView: View {
                     }
                     Text("\(pctStr(1 - s)) R").foregroundStyle(WidgetColor.rep)
                 }
-                .font(.system(size: 7.5, weight: .semibold)).padding(.top, 2)
+                .font(Brand.textFixed(7.5, .semibold)).padding(.top, 2)
             }
             if e.trend.count >= 2 {
                 TrajectoryStrip(trend: e.trend, showMargins: false)
                     .frame(height: 32).padding(.top, 4)
             }
-            ledgerRule().padding(.top, 2).padding(.bottom, 5)
+            Spacer().frame(height: 8)
             statGrid(p, e, count: 4, columns: 2, valueSize: 11.5, labelSize: 7.5, spacing: 5)
             Spacer(minLength: 0)
         }
@@ -281,23 +276,23 @@ struct PrecinctHomeView: View {
         let lean = WidgetColor.lean(p.leanDemShare)
         return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(precinctHeadline(p)).font(.system(size: 11, weight: .semibold))
+                Text(precinctHeadline(p)).font(Brand.textFixed(11, .semibold))
                     .lineLimit(1).minimumScaleFactor(0.7)
-                Text("\(countyDisplay(p.borough)), \(p.state)").font(.system(size: 9.5))
+                Text(precinctArea(p)).font(Brand.textFixed(9.5, .regular))
                     .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
                 Spacer(minLength: 2)
                 if let sub = mediumSubline(p, e) {
-                    Text(sub).font(.system(size: 8.5)).foregroundStyle(.secondary)
+                    Text(sub).font(Brand.textFixed(8.5, .regular)).foregroundStyle(.secondary)
                         .lineLimit(1).minimumScaleFactor(0.7)
                 }
             }
-            ledgerRule().padding(.vertical, 6)
+            Spacer().frame(height: 12)
             HStack(alignment: .top, spacing: 14) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(p.leanShort).font(.system(size: 34, weight: .heavy, design: .serif))
+                    Text(p.leanShort).font(Brand.displayFont(34, .heavy))
                         .foregroundStyle(lean).lineLimit(1).minimumScaleFactor(0.5)
                     if let label = p.leanLabel, let y = p.leanYear {
-                        Text("\(label) in \(String(y))").font(.system(size: 9, weight: .semibold))
+                        Text("\(label) in \(String(y))").font(Brand.textFixed(9, .semibold))
                             .foregroundStyle(lean).lineLimit(1).minimumScaleFactor(0.6)
                     }
                     if let s = p.leanDemShare {
@@ -307,7 +302,7 @@ struct PrecinctHomeView: View {
                             Spacer(minLength: 3)
                             Text("\(pctStr(1 - s)) Rep").foregroundStyle(WidgetColor.rep)
                         }
-                        .font(.system(size: 8.5, weight: .semibold)).padding(.top, 2)
+                        .font(Brand.textFixed(8.5, .semibold)).padding(.top, 2)
                     }
                     Spacer(minLength: 2)
                     if e.trend.count >= 2 {
@@ -322,7 +317,7 @@ struct PrecinctHomeView: View {
                     HStack(spacing: 4) {
                         if let top = p.raceBreakdown.first {
                             Text("\(pctStr(top.value)) \(top.label)")
-                                .font(.system(size: 8.5)).foregroundStyle(.secondary)
+                                .font(Brand.textFixed(8.5, .regular)).foregroundStyle(.secondary)
                                 .lineLimit(1).minimumScaleFactor(0.7)
                         }
                         Spacer(minLength: 4)
@@ -337,10 +332,7 @@ struct PrecinctHomeView: View {
 
     private func mediumSubline(_ p: PrecinctProfile, _ e: PrecinctEntry) -> String? {
         if let v = p.leanVotes, v < 100 { return "only \(v) vote\(v == 1 ? "" : "s") cast" }
-        if let t = p.turnoutEst, t <= 1.05, let v = p.leanVotes {
-            return "\(pctStr(min(t, 1))) turnout from \(compactNum(v)) votes"
-        }
-        return nil
+        return votesLine(p, compact: compactNum)
     }
 
     // MARK: Large — the whole profile
@@ -350,20 +342,20 @@ struct PrecinctHomeView: View {
         return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .lastTextBaseline, spacing: 8) {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(precinctHeadline(p)).font(.system(size: 13, weight: .semibold))
+                    Text(precinctHeadline(p)).font(Brand.textFixed(13, .semibold))
                         .lineLimit(1).minimumScaleFactor(0.7)
-                    Text("\(countyDisplay(p.borough)), \(p.state)").font(.system(size: 10.5))
+                    Text(precinctArea(p)).font(Brand.textFixed(10.5, .regular))
                         .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
                 }
                 Spacer(minLength: 6)
                 updatedView(e, size: 9)
             }
-            ledgerRule().padding(.vertical, 8)
+            Spacer().frame(height: 16)
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(p.leanShort).font(.system(size: 40, weight: .heavy, design: .serif))
+                Text(p.leanShort).font(Brand.displayFont(40, .heavy))
                     .foregroundStyle(lean).lineLimit(1).minimumScaleFactor(0.5)
                 if let label = p.leanLabel, let y = p.leanYear {
-                    Text("\(label) in \(String(y))").font(.system(size: 11, weight: .semibold))
+                    Text("\(label) in \(String(y))").font(Brand.textFixed(11, .semibold))
                         .foregroundStyle(lean).lineLimit(1).minimumScaleFactor(0.6)
                 }
             }
@@ -378,10 +370,10 @@ struct PrecinctHomeView: View {
                     }
                     Text("\(pctStr(1 - s)) Rep").foregroundStyle(WidgetColor.rep)
                 }
-                .font(.system(size: 9, weight: .semibold)).padding(.top, 3)
+                .font(Brand.textFixed(9, .semibold)).padding(.top, 3)
             }
             if e.trend.count >= 2 {
-                sectionHead("Presidential trajectory")
+                sectionHead("Politics")
                 TrajectoryStrip(trend: e.trend).frame(height: 60)
             }
             let rows = p.raceBreakdown.filter { $0.value >= 0.02 }.prefix(4)
@@ -390,50 +382,69 @@ struct PrecinctHomeView: View {
                 VStack(spacing: 4) {
                     ForEach(Array(rows.enumerated()), id: \.element.label) { idx, item in
                         HStack(spacing: 7) {
-                            Text(item.label).font(.system(size: 9.5))
-                                .frame(width: 62, alignment: .leading).lineLimit(1).minimumScaleFactor(0.7)
+                            Text(item.label).font(Brand.textFixed(9.5, .regular))
+                                .lineLimit(1).fixedSize().frame(width: 66, alignment: .leading)
                             GeometryReader { geo in
                                 Rectangle().fill(WidgetColor.rankTint(idx))
                                     .frame(width: max(2, geo.size.width * min(1, item.value)))
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
                             .frame(height: 5)
-                            Text(pctStr(item.value)).font(.system(size: 9.5, weight: .semibold))
+                            Text(pctStr(item.value)).font(Brand.textFixed(9.5, .semibold))
                                 .frame(width: 32, alignment: .trailing)
                         }
                     }
                 }
             }
-            sectionHead(e.baseline.map { "The numbers, vs \($0.displayName)" } ?? "The numbers")
-            statGrid(p, e, count: 6, columns: 3, valueSize: 14, labelSize: 8.5, spacing: 8,
-                     namesArea: false)
+            // The card's last two sections, in its order and columns.
+            sectionHead("Money and education")
+            cells([p.incomeMedian.map { (moneyFull($0), "Median income") }, nil,
+                   p.pctBachelorsOrHigher.map { (pctStr($0), "College degree") }])
+            sectionHead("People and housing")
+            cells([p.popTotal.map { (compactNum($0), "Population") },
+                   p.avgAge.map { (String(Int($0.rounded())), "Median age") },
+                   p.popDensity.map { ("\(Metric.density.format($0))/mi²", "Density") }])
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
+    /// One row of three stat columns. A nil leaves its column empty, as on the card.
+    private func cells(_ items: [(String, String)?]) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                Group {
+                    if let item { StatCell(value: item.0, label: item.1, valueSize: 14, labelSize: 8.5) }
+                    else { Color.clear.frame(height: 1) }
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        }
+    }
+
     private func sectionHead(_ title: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.system(size: 10, weight: .semibold, design: .serif))
-            ledgerRule()
+            Text(title).font(Brand.displayFont(10, .semibold))
+            // The card's header rule: ink, inside the content margins.
+            Rectangle().fill(Brand.ruleInk).frame(height: 1)
         }
         .padding(.top, 8).padding(.bottom, 5)
     }
 
     private var placeholder: some View {
         VStack(spacing: 6) {
-            Image("WidgetPin").resizable().scaledToFit().frame(width: 20, height: 24)
+            BrandMark(size: 24)
             Text(entry.outOfCoverage
                  ? "No precinct here yet. Precinctly covers \(Coverage.abbrList)."
-                 : "Open Precinctly and allow precise location").font(.caption)
+                 : "Open Precinctly and allow precise location").font(.bt(.caption))
                 .multilineTextAlignment(.center).foregroundStyle(.secondary)
         }
     }
 }
 
 
-// MARK: - Hand-drawn-style widget components (static; widgets can't run live filters)
+// MARK: - Widget components
 
-/// Two-party bar: blue (Dem) over red (Rep), capsule-clipped, with a dark ink outline.
+/// Two-party bar: the Democratic share in blue over a red track.
 private struct TwoPartyBarW: View {
     let demShare: Double
     var height: CGFloat = 9
@@ -443,22 +454,20 @@ private struct TwoPartyBarW: View {
                 Rectangle().fill(WidgetColor.rep)
                 Rectangle().fill(WidgetColor.dem).frame(width: max(4, geo.size.width * demShare))
             }
-            .clipShape(Capsule())
-            .overlay(Capsule().strokeBorder(WidgetColor.ink, lineWidth: height >= 7 ? 1.2 : 0.8))
         }
         .frame(height: height)
     }
 }
 
-/// value over label, serif number. The unit the stat grids are built from.
+/// A value over its label. The unit the stat grids are built from.
 private struct StatCell: View {
     let value: String, label: String
     let valueSize: CGFloat, labelSize: CGFloat
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(value).font(.system(size: valueSize, weight: .semibold, design: .serif))
+            Text(value).font(Brand.displayFont(valueSize, .semibold))
                 .lineLimit(1).minimumScaleFactor(0.6)
-            Text(label).font(.system(size: labelSize)).foregroundStyle(.secondary)
+            Text(label).font(Brand.textFixed(labelSize, .regular)).foregroundStyle(.secondary)
                 .lineLimit(1).minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -490,9 +499,8 @@ private struct TrajectoryStrip: View {
             ZStack {
                 ForEach(Array(trend.enumerated()), id: \.offset) { i, e in
                     let s = e.demShare ?? 0.5
-                    let yEven = py(0.5), yVal = py(s), up = s >= 0.5
-                    UnevenRoundedRectangle(topLeadingRadius: up ? 2 : 0, bottomLeadingRadius: up ? 0 : 2,
-                                           bottomTrailingRadius: up ? 0 : 2, topTrailingRadius: up ? 2 : 0)
+                    let yEven = py(0.5), yVal = py(s)
+                    Rectangle()
                         .fill(WidgetColor.lean(s))
                         .frame(width: barW, height: max(1.5, abs(yVal - yEven)))
                         .position(x: px(i), y: (yEven + yVal) / 2)
@@ -503,7 +511,7 @@ private struct TrajectoryStrip: View {
                     p.move(to: CGPoint(x: 0, y: py(0.5)))
                     p.addLine(to: CGPoint(x: w, y: py(0.5)))
                 }
-                .stroke(WidgetColor.rule, style: StrokeStyle(lineWidth: 1, dash: [2.5, 2.5]))
+                .stroke(Color.secondary.opacity(0.45), style: StrokeStyle(lineWidth: 1, dash: [2.5, 2.5]))
                 ForEach(Array(trend.enumerated()), id: \.offset) { i, e in
                     let s = e.demShare ?? 0.5
                     if showMargins {
@@ -512,11 +520,11 @@ private struct TrajectoryStrip: View {
                         // Split out of the .position call: inline, the ternary over two CGFloat
                         // min/max chains blows the type checker's budget.
                         let labelY: CGFloat = marginLabelY(share: s, axis: py(0.5), tip: py(s), height: h)
-                        Text(marginLabel(s)).font(.system(size: 7.5, weight: .bold))
+                        Text(marginLabel(s)).font(Brand.textFixed(7.5, .bold))
                             .foregroundStyle(WidgetColor.lean(s))
                             .position(x: px(i), y: labelY)
                     }
-                    Text(String(e.year).suffix(2)).font(.system(size: 8))
+                    Text(String(e.year).suffix(2)).font(Brand.textFixed(8, .regular))
                         .foregroundStyle(.secondary)
                         .position(x: px(i), y: h - 4)
                 }
@@ -570,22 +578,22 @@ struct PrecinctLockView: View {
             ZStack {
                 AccessoryWidgetBackground()
                 Text(p == nil ? "No data" : p?.leanDemShare == nil ? "No election" : p?.leanShort ?? "No data")
-                    .font(.system(.headline, design: .serif)).widgetAccentable()
+                    .font(Brand.textFont(.headline, .bold)).widgetAccentable()
                     .minimumScaleFactor(0.5).lineLimit(1).padding(4)
                     .accessibilityLabel(accessibilityLabel)
             }
         default: // accessoryRectangular
             VStack(alignment: .leading, spacing: 1) {
-                Text(p.map(precinctHeadline) ?? "Precinctly").font(.headline).widgetAccentable().lineLimit(1)
-                Text(p.map { "\(countyDisplay($0.borough)), \($0.state)" }
+                Text(p.map(precinctHeadline) ?? "Precinctly").font(.bt(.headline)).widgetAccentable().lineLimit(1)
+                Text(p.map { precinctArea($0) }
                      ?? (entry.outOfCoverage ? "No precinct here yet" : "Open Precinctly"))
-                    .font(.caption2).lineLimit(1)
+                    .font(.bt(.caption2)).lineLimit(1)
                 Text((p?.leanShort ?? "No precinct data")
                      + (rectSubline(p).map { ", \($0)" } ?? ""))
-                    .font(.caption).lineLimit(1)
+                    .font(.bt(.caption)).lineLimit(1)
                 if let p, let top = p.raceBreakdown.first {
                     Text("\(pctStr(top.value)) \(top.label)" + (p.incomeMedian.map { ", \(moneyShort($0))" } ?? ""))
-                        .font(.caption2).lineLimit(1)
+                        .font(.bt(.caption2)).lineLimit(1)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -620,49 +628,31 @@ private func moneyShort(_ v: Int) -> String {
     if v >= 1000 { return "$\(Int((Double(v) / 1000).rounded()))k" }
     return "$\(v)"
 }
+/// The app's compact count (Fmt.compact): one decimal, a trailing ".0" dropped. 2.9k, 20.2M.
 private func compactNum(_ n: Int) -> String {
-    if n >= 1_000_000 { return String(format: "%.1fM", Double(n) / 1_000_000) }
-    if n >= 1_000 { return String(format: "%.0fk", Double(n) / 1_000) }
+    func trimmed(_ v: Double) -> String {
+        let s = String(format: "%.1f", v)
+        return s.hasSuffix(".0") ? String(s.dropLast(2)) : s
+    }
+    if n >= 1_000_000 { return trimmed(Double(n) / 1_000_000) + "M" }
+    if n >= 1_000 { return trimmed(Double(n) / 1_000) + "k" }
     return "\(n)"
 }
+/// The card's income figure: $37,654, or $250k+ at the Census top code.
+private func moneyFull(_ v: Int) -> String {
+    if v >= 250001 { return "$250k+" }
+    return "$" + v.formatted(.number.grouping(.automatic))
+}
 
-private enum WidgetColor {
-    private static func lerp(_ a: (Double, Double, Double), _ b: (Double, Double, Double), _ t: Double) -> Color {
-        Color(red: a.0 + (b.0 - a.0) * t, green: a.1 + (b.1 - a.1) * t, blue: a.2 + (b.2 - a.2) * t)
-    }
-    /// Matches the app's Palette.lean diverging ramp (red ↔ purple ↔ blue).
-    static func lean(_ share: Double?) -> Color {
-        guard let s = share else { return .gray }
-        let red = (0.85, 0.16, 0.16), purple = (0.55, 0.25, 0.7), blue = (0.13, 0.4, 0.9)
-        let t = max(0, min(1, s))
-        return t >= 0.5 ? lerp(purple, blue, (t - 0.5) * 2) : lerp(red, purple, t * 2)
-    }
-    /// Party anchors, same values as the app's Palette.dem/.rep.
-    static let dem = lean(0.9)
-    static let rep = lean(0.1)
-    /// Restrained single-hue ramp keyed by rank, mirroring the app's Palette.rankTint: largest
-    /// group darkest. Lighter base in dark mode so the low ranks stay visible.
+enum WidgetColor {
+    /// The app's lean scale and party anchors.
+    static func lean(_ share: Double?) -> Color { Brand.leanColor(share) }
+    static var dem: Color { lean(0.9) }
+    static var rep: Color { lean(0.1) }
+    /// One-hue ramp keyed by rank, the same as the app's race bars: largest group darkest.
     static func rankTint(_ rank: Int) -> Color {
-        let base = Color(UIColor { tc in
-            tc.userInterfaceStyle == .dark
-                ? UIColor(red: 0.62, green: 0.66, blue: 0.82, alpha: 1)
-                : UIColor(red: 0.36, green: 0.40, blue: 0.58, alpha: 1)
-        })
-        return base.opacity(max(0.35, 1.0 - Double(rank) * 0.16))
+        Brand.rankBase.opacity(max(0.35, 1.0 - Double(rank) * 0.16))
     }
-    /// Adapts to the widget's light/dark rendering so text (which uses adaptive .primary/.secondary)
-    /// always contrasts the paper — fixes white-on-light-paper in dark mode.
-    private static func dynamic(_ light: (Double, Double, Double), _ dark: (Double, Double, Double)) -> Color {
-        Color(UIColor { tc in
-            let c = tc.userInterfaceStyle == .dark ? dark : light
-            return UIColor(red: c.0, green: c.1, blue: c.2, alpha: 1)
-        })
-    }
-    static let mapTone  = dynamic((0.93, 0.94, 0.92), (0.11, 0.12, 0.14))   // street-map paper: light ↔ dark slate
-    static let rule     = dynamic((0.80, 0.83, 0.78), (0.27, 0.31, 0.35))   // ledger hairlines between row groups
-    static let ink      = dynamic((0.16, 0.20, 0.30), (0.82, 0.85, 0.92))   // bar/chip outline: dark ↔ light
-    /// Mini-map chip fill: a faint lighter panel over the paper in either mode.
-    static let chipFill = Color(UIColor { tc in
-        UIColor(white: 1, alpha: tc.userInterfaceStyle == .dark ? 0.12 : 0.6)
-    })
+    /// Widget background: the system background, like the app's sheet.
+    static let mapTone = Brand.surface
 }

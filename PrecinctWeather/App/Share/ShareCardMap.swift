@@ -12,8 +12,8 @@ import PrecinctKit
 // a clipping of the app rather than a separate artefact.
 //
 // `MKMapSnapshotter` is async and needs the network for tiles. When it fails (offline, or a
-// region MapKit won't serve) the same polygons are drawn onto plain paper instead, so the card
-// always has a hero and never a blank rectangle.
+// region MapKit won't serve) the same polygons are drawn on the card's plain background instead,
+// so the card always has a hero and never a blank rectangle.
 
 enum ShareCardMap {
 

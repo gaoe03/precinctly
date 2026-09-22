@@ -68,24 +68,24 @@ struct ShareCardPreview: View {
     }
 
     private var title: String {
-        "\(precinctHeadline(profile)), \(countyDisplay(profile.borough)) \(profile.state)"
+        "\(precinctHeadline(profile)), \(precinctArea(profile))"
     }
 
     private var election: ShareCardElectionPresentation {
-        ShareCardElectionPresentation(profile: profile)
+        ShareCardElectionPresentation(profile: profile, trend: trend)
     }
 
     private var header: some View {
         HStack {
+            Spacer()
             Button { dismiss() } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(backdrop.primary)
-                    .frame(width: 34, height: 34)
-                    .background(Circle().fill(backdrop.secondaryFill))
+                    .font(.bt(.body, .semibold))
+                    .foregroundStyle(backdrop.secondary)
+                    .frame(width: 36, height: 36)
+                    .background(Brand.iconShape.fill(backdrop.secondaryFill))
             }
             .accessibilityLabel("Close")
-            Spacer()
         }
         .padding(.horizontal, 16)
         .padding(.top, 12)
@@ -120,17 +120,17 @@ struct ShareCardPreview: View {
         VStack(spacing: 10) {
             if let problem {
                 Text(problem)
-                    .font(.footnote.weight(.medium))
+                    .font(.bt(.footnote, .medium))
                     .foregroundStyle(backdrop.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .transition(.opacity)
             }
             Button { showActivity = true } label: {
                 Label("Share", systemImage: "square.and.arrow.up")
-                    .font(.headline)
+                    .font(.bt(.headline))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 13)
-                    .background(Capsule().fill(backdrop.primary))
+                    .background(Brand.buttonShape.fill(backdrop.primary))
                     .foregroundStyle(backdrop.base)
             }
             // Large text needs the full width for each action label.
@@ -157,14 +157,13 @@ struct ShareCardPreview: View {
                            action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(label, systemImage: icon)
-                .font(.subheadline.weight(.semibold))
+                .font(.bt(.subheadline, .semibold))
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, dts.isAccessibilitySize ? 16 : 0)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-                .background(Capsule().fill(confirmed ? backdrop.confirmedFill : backdrop.secondaryFill))
-                .overlay(Capsule().strokeBorder(confirmed ? backdrop.confirmedRule : backdrop.rule))
+                .padding(.vertical, 13)
+                .background(Brand.buttonShape.fill(confirmed ? backdrop.confirmedFill : backdrop.secondaryFill))
                 .foregroundStyle(backdrop.primary)
         }
         .animation(.easeOut(duration: 0.18), value: confirmed)
@@ -234,23 +233,14 @@ struct ShareCardPreview: View {
         let confirmedRule: Color
 
         init(colorScheme: ColorScheme) {
-            if colorScheme == .dark {
-                base = Color(red: 0.098, green: 0.106, blue: 0.129)
-                primary = .white
-                secondary = .white.opacity(0.8)
-                secondaryFill = .white.opacity(0.12)
-                confirmedFill = .white.opacity(0.26)
-                rule = .white.opacity(0.18)
-                confirmedRule = .white.opacity(0.55)
-            } else {
-                base = Color(red: 0.945, green: 0.941, blue: 0.925)
-                primary = Color(red: 0.129, green: 0.145, blue: 0.184)
-                secondary = primary.opacity(0.75)
-                secondaryFill = primary.opacity(0.08)
-                confirmedFill = primary.opacity(0.16)
-                rule = primary.opacity(0.18)
-                confirmedRule = primary.opacity(0.45)
-            }
+            let dark = colorScheme == .dark
+            base = dark ? .black : Color(red: 0.93, green: 0.94, blue: 0.95)
+            primary = dark ? .white : Color(white: 0.07)
+            secondary = primary.opacity(0.72)
+            secondaryFill = primary.opacity(dark ? 0.14 : 0.07)
+            confirmedFill = primary.opacity(0.2)
+            rule = primary.opacity(0.14)
+            confirmedRule = primary.opacity(0.45)
         }
     }
 }
