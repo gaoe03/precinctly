@@ -28,8 +28,8 @@ schemes:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "1.03"
-    CURRENT_PROJECT_VERSION: "5"
+    MARKETING_VERSION: "2.0"
+    CURRENT_PROJECT_VERSION: "6"
     GENERATE_INFOPLIST_FILE: NO
     TARGETED_DEVICE_FAMILY: "1"
     CODE_SIGN_STYLE: Automatic
@@ -65,6 +65,7 @@ targets:
       - App/Share/ShareCardPreview.swift
       - App/Support/Formatting.swift
       - App/Support/BuildingBlocks.swift
+      - App/Support/Brand.swift
       - Widget/WidgetLocationPolicy.swift
       - Widget/PrecinctWidget.swift
     settings:
@@ -81,6 +82,8 @@ targets:
     platform: iOS
     sources:
       - App
+      - Widget/PrecinctWidget.swift
+      - Widget/WidgetLocationPolicy.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.gaoe.PrecinctWeather
@@ -112,6 +115,8 @@ targets:
     platform: iOS
     sources:
       - Widget
+      - App/Support/Brand.swift
+      - App/BrandFonts
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.gaoe.PrecinctWeather.Widget

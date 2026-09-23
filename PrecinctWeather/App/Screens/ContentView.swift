@@ -17,7 +17,7 @@ struct ContentView: View {
     @State private var selectionFlightTarget: MKCoordinateRegion?
     @State private var suppressCountyTint = false
     @AppStorage("hasOnboarded") private var hasOnboarded = false
-    /// Set when the 1.1 tour finishes. People updating from 1.0 have `hasOnboarded` but not this,
+    /// Set when the 2.0 tour finishes. People updating from 1.x have `hasOnboarded` but not this,
     /// so they see the tour once. Later updates find it set and skip the tour.
     @AppStorage("sawTour") private var sawTour = false
     private var tourDue: Bool {

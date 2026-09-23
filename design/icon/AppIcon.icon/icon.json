@@ -1,0 +1,17 @@
+{
+  "fill-specializations" : [
+    { "value" : { "solid" : "srgb:0.03922,0.11373,0.27843,1.00000" } },
+    { "appearance" : "dark", "value" : { "solid" : "srgb:0.04706,0.07059,0.14118,1.00000" } }
+  ],
+  "groups" : [
+    {
+      "layers" : [
+        { "glass" : true, "image-name" : "p.svg", "name" : "p" }
+      ],
+      "shadow" : { "kind" : "neutral", "opacity" : 0.4 },
+      "specular" : true,
+      "translucency" : { "enabled" : false, "value" : 0 }
+    }
+  ],
+  "supported-platforms" : { "squares" : "shared" }
+}
