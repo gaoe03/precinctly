@@ -1,0 +1,2 @@
+// Written by appstore-screenshots/site/build_site_assets.py from the app captures. Do not edit by hand.
+window.FRAMES={"sheetTop":0.07094,"peekTop":0.71854,"headH":0.02299,"pan":0.48176,"covers":{"who":[0.44701,0.14837],"money":[0.59538,0.14534],"people":[0.74073,0.25927]},"nPan":0.60862,"numTap":[12.35489,26.88787],"check":{"cardTurnoutBottom":350,"cardPoliticsTop":406,"numPrevBottom":983,"numPoliticsTop":1117}};
