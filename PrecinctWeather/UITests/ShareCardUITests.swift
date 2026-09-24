@@ -185,8 +185,9 @@ final class ShareCardUITests: XCTestCase {
                       "highest-income affordance does not expose the true tie count: \(highestIncome.label)")
         highestIncome.tap()
 
-        XCTAssertTrue(app.staticTexts["All precincts, highest first"].waitForExistence(timeout: 10),
+        XCTAssertTrue(app.staticTexts["All precincts"].waitForExistence(timeout: 10),
                       "the tie did not open the ranked list")
+        assertSortsFromTheTop(app)
         let precinct = app.buttons.matching(
             NSPredicate(format: "label ENDSWITH ', $250k+'")
         ).firstMatch
@@ -227,12 +228,13 @@ final class ShareCardUITests: XCTestCase {
             XCTAssertTrue(tie.label.contains("precincts tied"), "'\(testCase.prefix)' is not a tie: \(tie.label)")
             tie.tap()
 
-            XCTAssertTrue(app.staticTexts["All precincts, highest first"].waitForExistence(timeout: 10),
+            XCTAssertTrue(app.staticTexts["All precincts"].waitForExistence(timeout: 10),
                           "the tie opened a filtered list instead of the full ranking")
+            assertSortsFromTheTop(app)
             let rows = app.buttons.matching(NSPredicate(format: "label ENDSWITH %@", ", \(testCase.value)"))
             XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 10),
                           "no row shows the tied value \(testCase.value)")
-            let header = app.staticTexts["All precincts, highest first"]
+            let header = app.staticTexts["All precincts"]
             // Rows read "Precinct 1146, Queens, value", with a leading rank only when values
             // differ. The map controls stay in the tree under the cover, so match the row shape.
             let firstRow = app.buttons.matching(NSPredicate(format: "label MATCHES %@", "(\\d+, )?Precinct [^,]+, [^,]+, .+"))
@@ -597,6 +599,15 @@ final class ShareCardUITests: XCTestCase {
             return delta
         }
         return deltas
+    }
+
+    /// The ranking opened from a highest extreme sorts from the top ("Highest first", or
+    /// "Most Democratic first" on the lean chart), never from the bottom.
+    private func assertSortsFromTheTop(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let chip = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Sort, currently'")).firstMatch
+        XCTAssertTrue(chip.waitForExistence(timeout: 5), "the list has no sort chip", file: file, line: line)
+        XCTAssertFalse(["Lowest", "Most Republican", "Toward R"].contains { chip.label.contains($0) },
+                       "the ranking sorts from the bottom: \(chip.label)", file: file, line: line)
     }
 
     private func attach(_ name: String) {

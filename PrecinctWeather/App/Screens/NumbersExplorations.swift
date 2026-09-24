@@ -387,6 +387,41 @@ private struct MetricBlock: View {
 // MARK: - Detail page: one measure, the precincts behind each bar
 
 struct NumbersDetail: View {
+    @Environment(\.dynamicTypeSize) private var dts
+
+    /// The order names the direction in the chart's own terms.
+    private func sortLabel(lowest: Bool) -> String {
+        switch metric {
+        case .lean: lowest ? "Most Republican first" : "Most Democratic first"
+        case .shift: lowest ? "Toward R first" : "Toward D first"
+        default: lowest ? "Lowest first" : "Highest first"
+        }
+    }
+
+    private var sortMenu: some View {
+        Menu {
+            Button { lowestFirst = false } label: {
+                if lowestFirst { Text(sortLabel(lowest: false)) } else { Label(sortLabel(lowest: false), systemImage: "checkmark") }
+            }
+            Button { lowestFirst = true } label: {
+                if lowestFirst { Label(sortLabel(lowest: true), systemImage: "checkmark") } else { Text(sortLabel(lowest: true)) }
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Text(sortLabel(lowest: lowestFirst))
+                Image(systemName: "chevron.down").font(.bt(.caption2))
+            }
+            .font(.bt(.caption, .semibold))
+            .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+            .foregroundStyle(Color(uiColor: .secondaryLabel))
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, 9).padding(.vertical, 4)
+            .background(Color(.tertiarySystemFill), in: Brand.chipShape)
+        }
+        .accessibilityLabel("Sort, currently \(sortLabel(lowest: lowestFirst))")
+    }
+
     /// Rows that print the same value share a rank (5, 5, 7). Nil when every row ties,
     /// because a column of 1s says nothing.
     private var sharedRanks: [Int]? {
@@ -443,7 +478,9 @@ struct NumbersDetail: View {
                 .listRowSeparator(.hidden)
             }
             Section {
-                BrandListHeader(filter.map { "\(metric.bucketLabels[$0]) precincts" } ?? (lowestFirst ? "All precincts, lowest first" : "All precincts, highest first"), size: 19)
+                // The sort chip reaches the other end of any bar, so "under 20%" can start at 0%.
+                BrandSectionHeader(title: filter.map { "\(metric.bucketLabels[$0]) precincts" } ?? "All precincts",
+                                   stacked: dts.isAccessibilitySize) { sortMenu }
                     .listRowSeparator(.hidden)
                     .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 0, trailing: 16))
                 let ranks = sharedRanks
@@ -486,6 +523,7 @@ struct NumbersDetail: View {
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: metric) { limit = 40; lowestFirst = false }
         .onChange(of: filter) { limit = 40 }
+        .onChange(of: lowestFirst) { limit = 40 }
         .task(id: "\(metric.rawValue)|\(filter ?? -1)|\(model.selectedState)|\(county ?? "")|\(limit)|\(lowestFirst)") {
             let prefixes = regionPrefixes(model.selectedState)
             let unit = selectionInScope(model.selection, state: model.selectedState, county: county) ? model.selection?.unitID : nil

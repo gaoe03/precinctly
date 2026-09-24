@@ -161,6 +161,27 @@ final class CoreFlowUITests: XCTestCase {
 
     /// At peek a tap on the lean block expands the card. Once the card is open, the same block
     /// opens By the Numbers at the lean chart, and each stat opens its own chart.
+    /// A bar lists its precincts highest first. The sort chip flips the list, so the bottom of
+    /// "Under 20%" (0%) is one tap away instead of hundreds of rows down.
+    func testSortChipReachesTheBottomOfABar() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-hasOnboarded", "YES", "-hapticsEnabled", "NO", "-defaultState", "NY",
+                               "-disableLocation", "-liveByNumbers", "-openDetail", "college", "-exploreBucket", "0"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Under 20% precincts"].waitForExistence(timeout: 20), "the bar did not open")
+        let chip = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Sort, currently'")).firstMatch
+        XCTAssertTrue(chip.waitForExistence(timeout: 5))
+        XCTAssertTrue(chip.label.contains("Highest first"), chip.label)
+        let row = { (value: String) in
+            app.buttons.matching(NSPredicate(format: "label MATCHES %@", "(\\d+, )?Precinct .+, \(value)")).firstMatch
+        }
+        XCTAssertTrue(row("19%").waitForExistence(timeout: 10), "highest first should open on 19%")
+        chip.tap()
+        app.buttons["Lowest first"].tap()
+        XCTAssertTrue(row("0%").waitForExistence(timeout: 10), "lowest first did not reach 0%")
+        XCTAssertTrue(chip.label.contains("Lowest first"), chip.label)
+    }
+
     func testCardLeanAndStatsOpenTheirCharts() {
         let app = XCUIApplication()
         app.launchArguments = ["-hasOnboarded", "YES", "-hapticsEnabled", "NO", "-disableLocation",

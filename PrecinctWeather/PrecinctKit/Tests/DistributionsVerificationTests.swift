@@ -400,4 +400,47 @@ final class DistributionsVerificationTests: XCTestCase {
         XCTAssertEqual(region.avgDemShare ?? .nan, 0.759962055824443, accuracy: 1e-9)
         XCTAssertEqual(region.medianIncome, 123423)
     }
+
+    /// Every bar of every chart sorts both ways: lowest first starts at the bar's true minimum,
+    /// highest first at its maximum, both orders are monotonic, and neighboring bars never
+    /// overlap. A bar has rows exactly when the chart counts precincts in it.
+    func testEveryBarSortsBothWays() {
+        var checkedBars = 0
+        for state in ["NY", "CA", "OR"] {
+            for metric in Metric.allCases {
+                let dist = db.distribution(metric, state: state, county: nil, selectedUnitID: nil)
+                var ranges: [(lo: Double, hi: Double)] = []
+                for bucket in [Int?.none] + metric.bins.indices.map { Optional($0) } {
+                    let asc = db.ranked(metric, state: state, county: nil, bucket: bucket, ascending: true, limit: 200)
+                    let desc = db.ranked(metric, state: state, county: nil, bucket: bucket, ascending: false, limit: 200)
+                    let tag = "\(state) \(metric) bucket \(bucket.map(String.init) ?? "all")"
+                    let expected = bucket.map { dist.counts[$0] } ?? dist.total
+                    XCTAssertEqual(asc.isEmpty, expected == 0, "\(tag): rows vs chart count \(expected)")
+                    XCTAssertEqual(desc.isEmpty, expected == 0, tag)
+                    guard let lo = asc.first?.value, let hi = desc.first?.value else { continue }
+                    checkedBars += 1
+                    let a = asc.compactMap(\.value), d = desc.compactMap(\.value)
+                    XCTAssertEqual(a.count, asc.count, "\(tag): a row without a value")
+                    XCTAssertEqual(a, a.sorted(), "\(tag): lowest first is out of order")
+                    XCTAssertEqual(d, d.sorted(by: >), "\(tag): highest first is out of order")
+                    XCTAssertLessThanOrEqual(lo, hi, tag)
+                    XCTAssertEqual(lo, a.min(), tag)
+                    XCTAssertEqual(hi, d.max(), tag)
+                    if expected <= 200 {
+                        // Small bars: both orders hold the same precincts.
+                        XCTAssertEqual(Set(asc.map(\.unitID)), Set(desc.map(\.unitID)), tag)
+                    }
+                    if bucket != nil, metric != .largestGroup { ranges.append((lo, hi)) }
+                }
+                // Value bars are cut on the printed value, so their raw ranges never overlap.
+                let sorted = ranges.sorted { $0.lo < $1.lo }
+                for (x, y) in zip(sorted, sorted.dropFirst()) {
+                    XCTAssertLessThan(x.hi, y.lo, "\(state) \(metric): bars overlap \(x) and \(y)")
+                }
+            }
+        }
+        // 3 states, 9 charts, up to 6 lists each. CA has no turnout, so fewer than all 162.
+        XCTAssertGreaterThan(checkedBars, 120, "the sort check covered only \(checkedBars) lists")
+    }
+
 }
