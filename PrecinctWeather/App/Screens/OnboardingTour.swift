@@ -1,5 +1,6 @@
 import SwiftUI
 import CoreLocation
+import PrecinctKit
 
 // MARK: - First-run tour
 //
@@ -447,10 +448,20 @@ private struct TourDim: Shape {
 
 // MARK: - Welcome
 
-/// The one full-screen moment: the app mark and one line about the app, ink on the page color.
+/// The one full-screen moment, set like a results page: the name, one line about the app, then
+/// the app's features at a glance, each shown with one real number from the bundled database.
 private struct TourWelcome: View {
     let onStart: () -> Void
     let onSkip: () -> Void
+
+    private struct Glance: Identifiable {
+        let figure: String
+        let color: Color
+        let title: String
+        let detail: String
+        var id: String { title }
+    }
+    @State private var glances: [Glance] = []
 
     var body: some View {
         ZStack {
@@ -462,24 +473,33 @@ private struct TourWelcome: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isModal)
+        .task { glances = Self.loadGlances() }
     }
 
     private func content(fill: Bool) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            if fill { Spacer(minLength: 24) }
-            BrandMark(size: 76)
-                .accessibilityHidden(true)
-            Text("Precinctly")
-                .brandScaledDisplay(40, .heavy)
-                .foregroundStyle(Color.primary)
-                .padding(.top, 22)
-                .accessibilityAddTraits(.isHeader)
+            if fill { Spacer(minLength: 12) }
+            HStack(spacing: 12) {
+                BrandMark(size: 44).accessibilityHidden(true)
+                Text("Precinctly")
+                    .brandScaledDisplay(32, .heavy)
+                    .foregroundStyle(Color.primary)
+                    .accessibilityAddTraits(.isHeader)
+            }
             Text("See how any precinct votes and who lives there.")
-                .font(.bt(.title3))
-                .foregroundStyle(.secondary)
+                .brandScaledDisplay(26, .bold)
+                .foregroundStyle(Color.primary)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 8)
-            if fill { Spacer(minLength: 32) } else { Color.clear.frame(height: 40) }
+                .padding(.top, 28)
+            if !glances.isEmpty {
+                BrandSectionHeader(title: "At a glance", stacked: false) { EmptyView() }
+                    .padding(.top, 28)
+                VStack(alignment: .leading, spacing: 16) {
+                    ForEach(glances) { glanceRow($0) }
+                }
+                .padding(.top, 16)
+            }
+            if fill { Spacer(minLength: 28) } else { Color.clear.frame(height: 36) }
             Button(action: onStart) {
                 Text("Show me around")
                     .font(.bt(.headline, .semibold))
@@ -498,9 +518,61 @@ private struct TourWelcome: View {
             .buttonStyle(.plain)
             .padding(.top, 8)
         }
-        .padding(.horizontal, 28)
+        .padding(.horizontal, 24)
         .padding(.top, 20)
         .padding(.bottom, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// A feature and one real number that shows it: the figure, what it is, and where it is from.
+    private func glanceRow(_ g: Glance) -> some View {
+        // The figure is centered on the title line, so the two read as level. A shared baseline
+        // left the taller figure standing above the title.
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .center, spacing: 14) {
+                Text(g.figure)
+                    .brandScaledFigure(22, .heavy)
+                    .foregroundStyle(g.color)
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                    // One width for every figure, so the titles line up in a column.
+                    .frame(width: 112, alignment: .leading)
+                Text(g.title).font(.bt(.subheadline, .semibold)).foregroundStyle(Color.primary)
+            }
+            Text(g.detail).font(.bt(.footnote)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, 126)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Real precincts from the bundled database. Each row is left out if its precinct is missing.
+    private static func loadGlances() -> [Glance] {
+        func profile(_ id: String) -> PrecinctProfile? { PrecinctDB.shared.precinct(unitID: id)?.profile }
+        func margin(_ s: Double) -> Int { Int(((s - 0.5) * 200).rounded()) }
+        // The area, not the precinct number: a new reader knows San Francisco, not 9723.
+        func area(_ p: PrecinctProfile) -> String { precinctArea(p) }
+        var rows: [Glance] = []
+        if let p = profile("06075-:-060759723"), let s = p.leanDemShare {
+            rows.append(Glance(figure: p.leanShort, color: Palette.lean(s), title: "How it voted",
+                               detail: "A precinct in \(area(p))" + (p.leanYear.map { ", in \($0)" } ?? "")))
+        }
+        if let p = profile("36081-:-36081001322"), let s = p.leanDemShare, let prev = p.prevDemShare,
+           let y0 = p.prevYear {
+            let swing = margin(s) - margin(prev)
+            rows.append(Glance(figure: "\(abs(swing)) pts", color: swing > 0 ? Palette.dem : Palette.rep,
+                               title: "How it swung",
+                               detail: "Toward \(swing > 0 ? "Democrats" : "Republicans") since \(y0), in \(area(p))"))
+        }
+        if let p = profile("48201-:-48201000977"), let top = p.raceBreakdown.max(by: { $0.value < $1.value }) {
+            rows.append(Glance(figure: Fmt.pct(top.value), color: .primary, title: "Who lives there",
+                               detail: "\(top.label) residents, in \(area(p))"))
+        }
+        if let p = profile("25025-:-25025002203"), let income = p.incomeMedian {
+            rows.append(Glance(figure: Fmt.incomeTopCoded(income), color: .primary, title: "Money and education",
+                               detail: "Median household income, in \(area(p))"))
+        }
+        rows.append(Glance(figure: "54,718", color: .primary, title: "By the Numbers",
+                           detail: "Precincts to compare, in six states and the DMV"))
+        return rows
     }
 }
