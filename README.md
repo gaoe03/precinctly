@@ -5,16 +5,20 @@ A native iOS app and home/lock-screen widget that shows the political lean and d
 Covers New York, California, Colorado, Massachusetts, Oregon, Texas, and the DMV (Washington, DC, Montgomery and Prince George's Counties, and Northern Virginia).
 
 <p align="center">
-  <img src="site/assets/hero_ca.jpg" width="240" alt="Precinctly map, San Francisco (D +87)">
-  <img src="site/assets/demo_map_hid.jpg" width="240" alt="Precinctly map, Queens NY (R +10)">
-  <img src="site/assets/demo_card_hid.png" width="240" alt="Precinctly profile: voting trend, demographics, income">
+  <img src="site/assets/hero-ny.webp" width="240" alt="Precinctly map of Corona, Queens, with the card reading R+10, Lean Rep in 2024">
+  <img src="site/assets/btn-income.webp" width="240" alt="By the Numbers: a chart of median household income across New York precincts, with this precinct's bar marked You">
+  <img src="site/assets/home-light.webp" width="240" alt="An iPhone Home Screen with the medium and small Precinctly widgets">
 </p>
 
 ## What it does
 
-- **Map explorer.** Tap any precinct for its profile: presidential lean, median income, race and ethnicity, and other census demographics.
-- **Widgets.** Home and lock-screen widgets read your current location and show the precinct around you.
+- **Map and card.** Tap any precinct for its card: presidential margin, results in earlier races, race and ethnicity, median income, college degrees, age, density and housing.
+- **By the Numbers.** Charts of how every precinct in a state or county spreads out on each measure, with your precinct marked. Tap a bar to list its precincts, sorted either way, and tap one to open it on the map.
+- **Widgets.** Home and Lock Screen widgets read your location and show the precinct you are in.
+- **Share card.** Any precinct's card can be shared as an image.
 - **Trends.** Where the data supports it, a precinct carries earlier presidential results instead of a single snapshot. California spans 2016 to 2024. Most Oregon and Colorado precincts also include earlier results.
+
+Get it on the [App Store](https://apps.apple.com/us/app/precinctly/id6792189622). The landing page is at [precinct.ethangao.xyz](https://precinct.ethangao.xyz).
 
 ## How it's built
 
