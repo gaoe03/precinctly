@@ -16,8 +16,7 @@ SECRETS = re.compile(
     r"|\b(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{30,}"
     r"|\bAKIA[A-Z0-9]{16}\b|\bsk-[A-Za-z0-9_-]{30,}"
 )
-PRIVATE_PARTS = {".agent-context", ".claude", ".agents", ".codex", "public_data",
-                 "backups", "node_modules", "DerivedData", "build", "notes", "appstore-screenshots"}
+PRIVATE_PARTS = {"public_data", "backups", "node_modules", "DerivedData", "build", "notes", "appstore-screenshots"}
 
 
 def git(root, *args):
@@ -28,6 +27,10 @@ def scan(root, base=None):
     names = set(git(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
                 .decode().split("\0")) - {""}
     issues = []
+    # Tracked files that an ignore rule covers, including the machine-wide excludes file that
+    # lists per-user tool config. Ignoring a file later must not hide that it was committed.
+    for name in sorted(set(git(root, "ls-files", "-ci", "--exclude-standard", "-z").decode().split("\0")) - {""}):
+        issues.append(f"{name}: tracked file matches an ignore rule")
     for name in sorted(names):
         path = root / name
         # Tracked deletions are not part of the next working-tree commit.
@@ -36,7 +39,7 @@ def scan(root, base=None):
         parts = Path(name).parts
         if (set(parts) & PRIVATE_PARTS or any(p.endswith(".xcodeproj") or p.startswith("build-") for p in parts)
                 or re.search(r"\.(?:db|sqlite)(?:-(?:shm|wal|journal))?$", name)
-                or Path(name).name in {"AGENTS.md", "CLAUDE.md", ".env", "id_rsa", "id_ed25519"}
+                or Path(name).name in {".env", "id_rsa", "id_ed25519"}
                 or Path(name).name.startswith(".env.") and not name.endswith(".example")):
             issues.append(f"{name}: private or generated file is eligible for commit")
             continue
@@ -53,7 +56,7 @@ def scan(root, base=None):
             if SECRETS.search(line):
                 issues.append(f"{name}:{line_number}: possible credential (value withheld)")
             # The policy itself necessarily names the terms it rejects.
-            policy_line = name == "scripts/check_repository.py" or (name == ".gitignore" and line.strip() in {"CLAUDE.md", ".claude/", ".codex/"})
+            policy_line = name == "scripts/check_repository.py"
             if not policy_line and ATTRIBUTION.search(line):
                 issues.append(f"{name}:{line_number}: unwanted attribution or tool reference")
     revisions = [f"{base}..HEAD"] if base else ["--all"]

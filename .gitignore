@@ -27,11 +27,6 @@ PrecinctWeather/build-*/
 site/assets/_backup_*/
 
 # local tooling and working notes - this machine only
-CLAUDE.md
-AGENTS.md
-.claude/
-.agents/
-.agent-context/
 package.json
 package-lock.json
 capture.js
